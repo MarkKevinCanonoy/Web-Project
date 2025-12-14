@@ -1,5 +1,6 @@
 const API_URL = 'http://localhost:8000/api';
 let allAppointments = [];
+let chatHistory = []; // [NEW] Stores chat context for the AI
 
 // check auth
 const token = localStorage.getItem('token');
@@ -8,7 +9,7 @@ if (!token || role !== 'student') {
     window.location.href = 'index.html';
 }
 
-// display user name - trying both keys just in case
+// display user name
 const storedName = localStorage.getItem('full_name') || localStorage.getItem('fullName') || 'Student';
 document.getElementById('user-name').textContent = storedName;
 
@@ -161,6 +162,11 @@ function displayAppointments(appointments) {
             `;
         }
 
+        // [NEW] Badge for AI bookings
+        const modeBadge = apt.booking_mode === 'ai_chatbot' 
+            ? `<span style="font-size:0.8rem; background:#f3e5f5; color:#8e44ad; padding:2px 6px; border-radius:4px;"><i class="fas fa-robot"></i> AI Booking</span>` 
+            : '';
+
         // --- fixed button logic here ---
         let actionButtonsHtml = '';
         
@@ -182,7 +188,7 @@ function displayAppointments(appointments) {
              // completed: text AND delete history
              actionButtonsHtml = `
                 <div style="display:flex; flex-direction:column; gap:5px; width:100%;">
-                    <span style="color:green; font-weight:bold; text-align:left; padding:5px;">Visit Completed ✅</span>
+                    <span style="color:green; font-weight:bold; text-align:left; padding:5px;">Visit Completed</span>
                     <button onclick="deleteHistory(${apt.id})" class="btn-cancel" style="background-color: #ffcdd2; color: #c62828;">Delete History</button>
                 </div>`;
         } 
@@ -198,11 +204,10 @@ function displayAppointments(appointments) {
                 <span class="status-pill ${apt.status}">${statusLabel}</span>
             </div>
             <div class="apt-body">
-                <p><strong>Time:</strong> ${niceTime}</p>
+                <p><strong>Time:</strong> ${niceTime} ${modeBadge}</p>
                 <p><strong>Service:</strong> ${apt.service_type || 'General'}</p>
                 <p><strong>Urgency:</strong> ${apt.urgency || 'Low'}</p>
                 <p><strong>Reason:</strong> ${apt.reason}</p>
-                <p><strong>Mode:</strong> ${apt.booking_mode === 'ai_chatbot' ? 'AI Chatbot' : 'Standard'}</p>
                 
                 ${adminNoteHtml}
             </div>
@@ -219,7 +224,6 @@ function generateTicket(apt) {
     // 1. fill data
     document.getElementById('pdf-name').textContent = apt.student_name || 'Student'; 
     document.getElementById('pdf-date').textContent = apt.appointment_date;
-    // use helper to show am/pm on ticket
     document.getElementById('pdf-time').textContent = formatTime(apt.appointment_time);
     document.getElementById('pdf-service').textContent = apt.service_type;
     document.getElementById('pdf-id').textContent = `#${apt.id}`;
@@ -248,10 +252,8 @@ function generateTicket(apt) {
         const element = document.getElementById('ticket-template');
         
         html2canvas(element).then(canvas => {
-            // convert canvas to image url
             const imgData = canvas.toDataURL("image/png");
             
-            // create temporary link to download
             const link = document.createElement('a');
             link.download = `Ticket_${apt.id}.png`;
             link.href = imgData;
@@ -344,21 +346,26 @@ function addChatMessage(sender, message) {
 
     const messageDiv = document.createElement('div');
     messageDiv.className = `chat-message ${sender}`;
-    messageDiv.textContent = message;
+    // handle newlines in AI response
+    messageDiv.innerHTML = message.replace(/\n/g, '<br>');
     chatMessages.appendChild(messageDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-// logic ai chat function
+// [UPDATED] Smart AI Chat function
 async function sendChatMessage() {
     const input = document.getElementById('chat-input');
     const message = input.value.trim();
     
     if (!message) return;
     
+    // 1. Show user message
     addChatMessage('user', message);
     input.value = '';
     
+    // 2. Add to history BEFORE sending
+    chatHistory.push({ role: "user", message: message });
+
     try {
         const response = await fetch(`${API_URL}/chat`, {
             method: 'POST',
@@ -366,15 +373,23 @@ async function sendChatMessage() {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${token}`
             },
-            body: JSON.stringify({ message }) 
+            // [IMPORTANT] Send message AND history
+            body: JSON.stringify({ 
+                message: message,
+                history: chatHistory 
+            }) 
         });
         
         const data = await response.json();
+        
+        // 3. Add bot response to history
+        chatHistory.push({ role: "model", message: data.response });
+
         addChatMessage('bot', data.response);
         
-        // logic ai refresh trigger
-        if (data.response.includes("booked") || data.response.includes("confirmed")) {
-            loadAppointments();
+        // 4. Logic AI refresh trigger (if AI says it booked/canceled)
+        if (data.response.toLowerCase().includes("booked") || data.response.toLowerCase().includes("canceled")) {
+            loadAppointments(); // Auto-refresh the appointment list
         }
 
     } catch (error) {
@@ -396,7 +411,6 @@ function handleEnter(e) {
     if (e.key === 'Enter') sendChatMessage();
 }
 
-// helper to convert 24h to 12h am/pm
 function formatTime(timeStr) {
     if (!timeStr) return "";
     

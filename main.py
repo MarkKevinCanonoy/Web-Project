@@ -9,14 +9,28 @@ from mysql.connector import Error
 import bcrypt
 import jwt
 import os
-import re 
+import json
+import google.generativeai as genai
+from dotenv import load_dotenv
 
-# --- GLOBAL STATE STORAGE (In-Memory) ---
-#chat_states: Dict[int, Dict] = {}
+# --- configuration setup ---
 
-app = FastAPI()
+# 1. load the variables from .env file
+load_dotenv()
 
-# Database configuration
+# 2. get keys safely
+API_KEY = os.getenv("GOOGLE_API_KEY")
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+
+# 3. configure google ai
+if not API_KEY:
+    print("warning: google_api_key not found in .env file")
+else:
+    genai.configure(api_key=API_KEY)
+    # using 'lite' model for speed
+    model = genai.GenerativeModel('gemma-3-12b-it')
+
+# 4. database config
 DB_CONFIG = {
     'host': 'localhost',
     'user': 'root',
@@ -24,22 +38,61 @@ DB_CONFIG = {
     'database': 'school_clinic'
 }
 
+# --- OPTIMIZATION: SMART AI INSTRUCTIONS ---
+# I updated this to handle one-liners, time conversion, and medical advice.
+
+BASE_INSTRUCTION = """
+ROLE: You are a smart, empathetic School Clinic Receptionist. 
+You can book appointments, cancel them, and give basic health advice.
+
+YOUR RULES:
+1. **One-Liner Parsing:** If the user gives all info at once (e.g., "Book checkup tomorrow 2pm for headache"), DO NOT ask questions. Just output the Booking JSON immediately.
+2. **Time Conversion:** ALWAYS convert natural times to 24-hour format.
+   - "2pm" -> "14:00:00"
+   - "2 in the afternoon" -> "14:00:00"
+   - "10am" -> "10:00:00"
+3. **Medical Advice:** If the user mentions symptoms (headache, fever, stomach ache), briefly suggest a simple home remedy (water, rest, breathing) while they wait for the appointment.
+   - *Disclaimer:* Always imply you are an AI, not a doctor.
+4. **Context Awareness:** Look at the "CONTEXT" list below. 
+   - If the user says "Cancel my appointment" -> List the IDs and Dates.
+   - If the user simply says a number (e.g., "5") and they have an appointment with ID 5, assume they want to CANCEL it.
+
+🔴 OUTPUT FORMAT (JSON ONLY for Actions):
+
+[ACTION 1: BOOKING] 
+{
+  "action": "book_appointment",
+  "date": "YYYY-MM-DD",
+  "time": "HH:MM:00",
+  "reason": "extracted reason",
+  "service_type": "Medical Consultation" (or "Medical Clearance"), 
+  "urgency": "Normal" (or "Urgent" if pain is severe),
+  "ai_advice": "Drink some water and rest your eyes." (Optional: Add advice here if they are sick)
+}
+
+[ACTION 2: CANCELING]
+{
+  "action": "cancel_appointment",
+  "appointment_id": 123
+}
+"""
+
+# --- helper functions ---
+
 def get_db():
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         return conn
     except Error as e:
-        raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"database connection failed: {str(e)}")
 
-# --- Helper Functions ---
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
-# JWT conf
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+# jwt configuration
 ALGORITHM = "HS256"
 security = HTTPBearer()
 
@@ -56,17 +109,15 @@ def decode_token(token: str):
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
+        raise HTTPException(status_code=401, detail="token expired")
     except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="invalid token")
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     return decode_token(token)
 
 def create_default_users():
-    """Seed default admins"""
-    print("Checking for default admin accounts...")
     conn = get_db()
     cursor = conn.cursor()
     try:
@@ -82,13 +133,16 @@ def create_default_users():
                     "INSERT INTO users (full_name, email, password, role) VALUES (%s, %s, %s, %s)",
                     (user['full_name'], user['email'], hashed_pw, user['role'])
                 )
-                print(f"Created default user: {user['email']} ({user['role']})")
+                print(f"created default user: {user['email']}")
         conn.commit()
     except Error as e:
-        print(f"Error seeding database: {e}")
+        print(f"error seeding database: {e}")
     finally:
         cursor.close()
         conn.close()
+
+# --- main app setup ---
+app = FastAPI()
 
 @app.on_event("startup")
 def on_startup():
@@ -102,7 +156,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Pydantic Models ---
+# --- pydantic models ---
 class UserRegister(BaseModel):
     full_name: str
     email: EmailStr
@@ -132,8 +186,9 @@ class AppointmentUpdate(BaseModel):
 
 class ChatMessage(BaseModel):
     message: str
+    history: List[dict] = []
 
-# --- API routes ---
+# --- api routes ---
 
 @app.post("/api/register")
 def register(user: UserRegister):
@@ -142,7 +197,7 @@ def register(user: UserRegister):
     try:
         cursor.execute("SELECT id FROM users WHERE email = %s", (user.email,))
         if cursor.fetchone():
-            raise HTTPException(status_code=400, detail="Email already registered")
+            raise HTTPException(status_code=400, detail="email already registered")
         
         hashed_pw = hash_password(user.password)
         cursor.execute(
@@ -150,7 +205,7 @@ def register(user: UserRegister):
             (user.full_name, user.email, hashed_pw)
         )
         conn.commit()
-        return {"message": "Registration successful"}
+        return {"message": "registration successful"}
     except Error as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -160,17 +215,14 @@ def register(user: UserRegister):
 @app.post("/api/admin/create-user")
 def create_admin_user(user: AdminCreateUser, current_user = Depends(get_current_user)):
     if current_user['role'] != 'super_admin':
-        raise HTTPException(status_code=403, detail="Only Super Admins can create admin accounts")
+        raise HTTPException(status_code=403, detail="only super admins can create admin accounts")
     
-    if user.role not in ['admin', 'super_admin']:
-        raise HTTPException(status_code=400, detail="Invalid role specified")
-
     conn = get_db()
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT id FROM users WHERE email = %s", (user.email,))
         if cursor.fetchone():
-            raise HTTPException(status_code=400, detail="Email already registered")
+            raise HTTPException(status_code=400, detail="email already registered")
         
         hashed_pw = hash_password(user.password)
         cursor.execute(
@@ -178,9 +230,7 @@ def create_admin_user(user: AdminCreateUser, current_user = Depends(get_current_
             (user.full_name, user.email, hashed_pw, user.role)
         )
         conn.commit()
-        return {"message": f"User created successfully as {user.role}"}
-    except Error as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"message": f"user created successfully as {user.role}"}
     finally:
         cursor.close()
         conn.close()
@@ -194,7 +244,7 @@ def login(user: UserLogin):
         db_user = cursor.fetchone()
         
         if not db_user or not verify_password(user.password, db_user['password']):
-            raise HTTPException(status_code=401, detail="Invalid email or password")
+            raise HTTPException(status_code=401, detail="invalid email or password")
         
         token = create_token(db_user['id'], db_user['role'], db_user['full_name'])
         
@@ -242,12 +292,11 @@ def get_appointments(current_user = Depends(get_current_user)):
 @app.post("/api/appointments")
 def create_appointment(appointment: AppointmentCreate, current_user = Depends(get_current_user)):
     if current_user['role'] != 'student':
-        raise HTTPException(status_code=403, detail="Only students can book appointments")
+        raise HTTPException(status_code=403, detail="only students can book appointments")
     
     conn = get_db()
     cursor = conn.cursor()
     try:
-        # INSERT matches schema ENUM('Normal', 'Urgent')
         cursor.execute("""
             INSERT INTO appointments (student_id, appointment_date, appointment_time, service_type, urgency, reason, booking_mode, status)
             VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
@@ -261,7 +310,7 @@ def create_appointment(appointment: AppointmentCreate, current_user = Depends(ge
             appointment.booking_mode
         ))
         conn.commit()
-        return {"message": "Appointment booked successfully", "id": cursor.lastrowid}
+        return {"message": "appointment booked successfully", "id": cursor.lastrowid}
     except Error as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -271,23 +320,20 @@ def create_appointment(appointment: AppointmentCreate, current_user = Depends(ge
 @app.put("/api/appointments/{appointment_id}")
 def update_appointment(appointment_id: int, update: AppointmentUpdate, current_user = Depends(get_current_user)):
     if current_user['role'] not in ['admin', 'super_admin']:
-        raise HTTPException(status_code=403, detail="Only admins can update appointments")
+        raise HTTPException(status_code=403, detail="only admins can update appointments")
     
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
     try:
-        # 1. check current status first
         cursor.execute("SELECT status FROM appointments WHERE id = %s", (appointment_id,))
         current_appt = cursor.fetchone()
         
         if not current_appt:
-            raise HTTPException(status_code=404, detail="Appointment not found")
+            raise HTTPException(status_code=404, detail="appointment not found")
 
-        # 2. plot hole fix: if already completed, stop!
         if update.status == 'completed' and current_appt['status'] == 'completed':
-            raise HTTPException(status_code=400, detail="ALREADY_SCANNED")
+            raise HTTPException(status_code=400, detail="already_scanned")
 
-        # 3. otherwise, update normally
         cursor.execute("""
             UPDATE appointments 
             SET status = %s, admin_note = %s, updated_at = NOW()
@@ -295,7 +341,7 @@ def update_appointment(appointment_id: int, update: AppointmentUpdate, current_u
         """, (update.status, update.admin_note, appointment_id))
         conn.commit()
         
-        return {"message": "Appointment updated successfully"}
+        return {"message": "appointment updated successfully"}
     finally:
         cursor.close()
         conn.close()
@@ -309,17 +355,23 @@ def delete_or_cancel_appointment(appointment_id: int, current_user = Depends(get
         appt = cursor.fetchone()
         
         if not appt:
-            raise HTTPException(status_code=404, detail="Appointment not found")
+            raise HTTPException(status_code=404, detail="appointment not found")
 
-        if current_user['role'] == 'student' and appt['student_id'] != current_user['user_id']:
-            raise HTTPException(status_code=403, detail="Not authorized")
-
-        if appt['status'] == 'pending':
-             cursor.execute("UPDATE appointments SET status = 'canceled', updated_at = NOW() WHERE id = %s", (appointment_id,))
-             message = "Appointment canceled successfully"
-        else:
+        if current_user['role'] in ['admin', 'super_admin']:
              cursor.execute("DELETE FROM appointments WHERE id = %s", (appointment_id,))
-             message = "Appointment record deleted successfully"
+             message = "appointment permanently deleted."
+        elif current_user['role'] == 'student':
+            if appt['student_id'] != current_user['user_id']:
+                raise HTTPException(status_code=403, detail="not authorized")
+
+            if appt['status'] == 'pending':
+                 cursor.execute("UPDATE appointments SET status = 'canceled', updated_at = NOW() WHERE id = %s", (appointment_id,))
+                 message = "appointment canceled successfully"
+            else:
+                 cursor.execute("DELETE FROM appointments WHERE id = %s", (appointment_id,))
+                 message = "appointment record deleted successfully"
+        else:
+             raise HTTPException(status_code=403, detail="action not allowed")
         
         conn.commit()
         return {"message": message}
@@ -330,7 +382,7 @@ def delete_or_cancel_appointment(appointment_id: int, current_user = Depends(get
 @app.get("/api/users")
 def get_users(current_user = Depends(get_current_user)):
     if current_user['role'] != 'super_admin':
-        raise HTTPException(status_code=403, detail="Only super admins can view users")
+        raise HTTPException(status_code=403, detail="only super admins can view users")
     
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
@@ -347,16 +399,16 @@ def get_users(current_user = Depends(get_current_user)):
 @app.delete("/api/users/{user_id}")
 def delete_user(user_id: int, current_user = Depends(get_current_user)):
     if current_user['role'] != 'super_admin':
-        raise HTTPException(status_code=403, detail="Only Super Admins can delete users")
+        raise HTTPException(status_code=403, detail="only super admins can delete users")
     if current_user['user_id'] == user_id:
-        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+        raise HTTPException(status_code=400, detail="you cannot delete your own account")
 
     conn = get_db()
     cursor = conn.cursor()
     try:
         cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
         conn.commit()
-        return {"message": "User deleted successfully"}
+        return {"message": "user deleted successfully"}
     except Error as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -364,251 +416,146 @@ def delete_user(user_id: int, current_user = Depends(get_current_user)):
         conn.close()
 
 # ==========================================
-#   logic based chatbot for booking appointments
+#  SMART AI CHATBOT V2
 # ==========================================
-# global dictionary to store user states in memory
-# --- helper: smart date calculator ---
-def get_next_weekday(day_name):
-    """
-    Calculates the date for 'next monday', 'this friday', etc.
-    """
-    days = {
-        "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, 
-        "friday": 4, "saturday": 5, "sunday": 6,
-        "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6
-    }
-    
-    target_day = days.get(day_name)
-    if target_day is None: return None
-    
-    today = datetime.now()
-    current_day = today.weekday()
-    
-    # calculate days to add
-    days_ahead = target_day - current_day
-    if days_ahead <= 0: # if today is Tuesday and user asks for Monday, go to next week
-        days_ahead += 7
-        
-    future_date = today + timedelta(days=days_ahead)
-    return future_date.strftime("%Y-%m-%d")
-
-# global dictionary for memory
-chat_states = {}
 
 @app.post("/api/chat")
 async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_user)):
     """
-    Smart Logic-Based Chatbot V2.
-    Fixed: 'Medical Clearance' bug, Casual Chit-Chat, and robust extraction.
+    Enhanced AI Chatbot:
+    - Supports One-Liner Booking ("Book checkup tomorrow 2pm")
+    - Smart Cancellation ("Cancel #5")
+    - Medical Advice ("My head hurts" -> Advice)
     """
-    
-    # 1. Access Control
-    if current_user['role'] != 'student':
-        return {"response": "Sorry, only students can book appointments.", "requires_action": False}
+    conn = get_db()
+    cursor = conn.cursor(dictionary=True)
 
-    user_id = current_user['user_id']
-    message = chat.message.strip().lower()
-
-    # 2. Initialize State
-    if user_id not in chat_states:
-        chat_states[user_id] = {"step": "idle", "data": {}}
-
-    state = chat_states[user_id]
-    current_data = state["data"]
-    
-    # --- Reset/Cancel Logic (High Priority) ---
-    if any(w in message for w in ["cancel", "stop", "reset", "wrong", "change"]):
-        chat_states[user_id] = {"step": "idle", "data": {}}
-        return {"response": "Okay, I've reset everything. 🔄 \n\nHow can I help you?", "requires_action": False}
-
-    # --- Casual Chit-Chat Logic (High Priority) ---
-    # Only if we are not in the middle of saving or deep in a flow
-    if state["step"] == "idle" or len(current_data) == 0:
-        if any(w in message for w in ["thank", "thanks", "salamat", "arigato"]):
-            return {"response": "You're very welcome! 💙 Stay healthy!", "requires_action": False}
+    # step 1: get appointments context
+    try:
+        cursor.execute("""
+            SELECT id, appointment_date, appointment_time, reason 
+            FROM appointments 
+            WHERE student_id = %s AND status IN ('pending', 'approved')
+            ORDER BY appointment_date ASC
+        """, (current_user['user_id'],))
+        active_appts = cursor.fetchall()
         
-        if any(w in message for w in ["bye", "goodbye", "see you"]):
-            return {"response": "Goodbye! Take care! 👋", "requires_action": False}
-        
-        greetings = ["good morning", "good afternoon", "good evening", "hi", "hello", "hey", "musta"]
-        if any(g in message for g in greetings):
-             # If they just said "Good morning", greet them. 
-             # If they said "Good morning I need a checkup", we continue to extraction.
-            intent_keywords = ["book", "appointment", "schedule", "clearance", "consultation", "medical"]
-            if not any(k in message for k in intent_keywords):
-                return {"response": "Hello! 👋 How can I help you today? \n\nYou can say 'I need a medical clearance' or 'Book a consultation'.", "requires_action": False}
-
-    # ==================================================
-    # STEP 1: SMART EXTRACTION (The Brain 🧠)
-    # ==================================================
-
-    # A. Service Detection (FIXED: Check 'clearance' BEFORE 'medical')
-    if "clearance" in message:
-        current_data["service_type"] = "Medical Clearance"
-    elif "consultation" in message or "checkup" in message or "check-up" in message:
-        current_data["service_type"] = "Medical Consultation"
-    elif "medical" in message and "service_type" not in current_data:
-        # If they just say "medical appointment", assume consultation but it's weak
-        current_data["service_type"] = "Medical Consultation"
-
-    # B. Urgency Detection
-    if "urgent" in message or "emergency" in message or "pain" in message or "asap" in message:
-        current_data["urgency"] = "Urgent"
-    elif "normal" in message or "routine" in message:
-        current_data["urgency"] = "Normal"
-
-    # C. Date Detection
-    if "tomorrow" in message:
-        current_data["appointment_date"] = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    elif "today" in message:
-        current_data["appointment_date"] = datetime.now().strftime("%Y-%m-%d")
-    else:
-        # Regex for YYYY-MM-DD
-        date_match = re.search(r'(\d{4}-\d{2}-\d{2})', message)
-        if date_match:
-            current_data["appointment_date"] = date_match.group(1)
+        appt_list_text = ""
+        if active_appts:
+            for appt in active_appts:
+                # Format: "ID 5: 2025-10-20 at 14:00"
+                appt_list_text += f"- ID {appt['id']}: {appt['appointment_date']} at {appt['appointment_time']} (Reason: {appt['reason']})\n"
         else:
-            # Day names (Monday, Tuesday...)
-            days_list = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "mon", "tue", "wed", "thu", "fri", "sat", "sun"]
-            for day in days_list:
-                if day in message:
-                    smart_date = get_next_weekday(day)
-                    if smart_date:
-                        current_data["appointment_date"] = smart_date
-                    break
+            appt_list_text = "None."
+            
+    finally:
+        cursor.close()
+        conn.close()
 
-    # D. Time Detection
-    # 12-hour format (e.g., 2:30pm, 2pm, 2 pm)
-    ampm_match = re.search(r'(\d{1,2})(?::(\d{2}))?\s*(am|pm)', message)
-    # 24-hour format (e.g., 14:00)
-    military_match = re.search(r'(\d{1,2}):(\d{2})(?!\s*(?:am|pm))', message)
-
-    if ampm_match:
-        h, m = int(ampm_match.group(1)), int(ampm_match.group(2) or 0)
-        p = ampm_match.group(3)
-        if 1 <= h <= 12 and 0 <= m <= 59:
-            if p == "pm" and h != 12: h += 12
-            elif p == "am" and h == 12: h = 0
-            current_data["appointment_time"] = f"{h:02d}:{m:02d}:00"
-    elif military_match:
-        h, m = int(military_match.group(1)), int(military_match.group(2))
-        if 0 <= h <= 23 and 0 <= m <= 59:
-            current_data["appointment_time"] = f"{h:02d}:{m:02d}:00"
-
-    # E. Reason Detection
-    if "because" in message:
-        parts = message.split("because", 1)
-        if len(parts) > 1: current_data["reason"] = parts[1].strip()
-    elif state["step"] == "asking_reason" and "reason" not in current_data:
-        current_data["reason"] = chat.message # If explicitly asked, take the whole input
-
-    # Save updates back to state
-    chat_states[user_id]["data"] = current_data
-
-    # ==================================================
-    # STEP 2: DETERMINE NEXT ACTION (The Flow 🌊)
-    # ==================================================
+    # step 2: dynamic prompt
+    final_instruction = f"""
+    {BASE_INSTRUCTION}
     
-    # If idle, check if we should start
-    if state["step"] == "idle":
-        if len(current_data) > 0 or any(w in message for w in ["book", "schedule", "visit"]):
-            state["step"] = "check_requirements"
+    Student Name: {current_user['full_name']}
+    Current Date: {datetime.now().strftime("%Y-%m-%d")}
 
-    # ==================================================
-    # STEP 3: TRAFFIC CONTROLLER (What is missing?)
-    # ==================================================
-    
-    if state["step"] not in ["idle", "saving"]:
-        data = state["data"]
-        
-        # 1. Missing Service
-        if "service_type" not in data:
-            chat_states[user_id]["step"] = "asking_service"
-            return {"response": "I can help! 🩺\n\nIs this for a **Medical Consultation** or **Medical Clearance**?", "requires_action": False}
-        
-        # 2. Missing Date
-        if "appointment_date" not in data:
-            chat_states[user_id]["step"] = "asking_date"
-            return {"response": f"Okay, a {data['service_type']}. 🗓️\n\nWhen would you like to come? (e.g., 'Tomorrow', 'Next Monday', or '2025-10-20')", "requires_action": False}
+    CONTEXT (Use this to help the student cancel or reschedule):
+    {appt_list_text}
+    """
 
-        # 3. Missing Time
-        if "appointment_time" not in data:
-            chat_states[user_id]["step"] = "asking_time"
-            return {"response": f"Got it: {data['appointment_date']}. 🕒\n\nWhat time? (e.g., '2pm' or '10:00 am')", "requires_action": False}
+    try:
+        # step 3: build history
+        history_for_google = [
+            {"role": "user", "parts": [final_instruction]},
+            {"role": "model", "parts": ["Understood. I am ready to help with booking, canceling, and advice. 😊"]}
+        ]
 
-        # 4. Missing Urgency
-        if "urgency" not in data:
-            chat_states[user_id]["step"] = "asking_urgency"
-            return {"response": "Is this condition **Normal** or **Urgent**?", "requires_action": False}
+        if chat.history:
+            recent_msgs = chat.history[-10:] 
+            for msg in recent_msgs:
+                role = "user" if msg.get("role") == "user" else "model"
+                history_for_google.append({
+                    "role": role,
+                    "parts": [msg.get("message", "")]
+                })
 
-        # 5. Missing Reason
-        if "reason" not in data:
-            chat_states[user_id]["step"] = "asking_reason"
-            return {"response": "Last step! 📝\n\nPlease briefly describe the **reason** for your visit.", "requires_action": False}
+        # step 4: generate response
+        chat_session = model.start_chat(history=history_for_google)
+        response = chat_session.send_message(chat.message)
+        ai_text = response.text
 
-        # All data present -> Move to Saving
-        state["step"] = "saving"
+        # step 5: check for json actions
+        if "{" in ai_text and "}" in ai_text:
+            try:
+                start = ai_text.find('{')
+                end = ai_text.rfind('}') + 1
+                data = json.loads(ai_text[start:end])
 
-    # ==================================================
-    # STEP 4: SAVE TO DATABASE (With Conflict Check)
-    # ==================================================
-    if state["step"] == "saving":
-        data = state["data"]
-        conn = get_db()
-        cursor = conn.cursor(buffered=True)
-        
-        try:
-            # 1. Availability Check
-            cursor.execute("""
-                SELECT id FROM appointments 
-                WHERE appointment_date = %s AND appointment_time = %s AND status != 'canceled'
-            """, (data['appointment_date'], data['appointment_time']))
-            
-            if cursor.fetchone():
-                # Slot is taken
-                del chat_states[user_id]["data"]["appointment_time"]
-                chat_states[user_id]["step"] = "asking_time"
-                cursor.close()
-                conn.close()
-                return {
-                    "response": f"⚠️ **Slot Taken!**\n\nThe time {data['appointment_time']} on {data['appointment_date']} is already booked.\n\nPlease choose a different time.", 
-                    "requires_action": False
-                }
+                # --- ACTION A: BOOKING ---
+                if data.get("action") == "book_appointment":
+                    conn = get_db()
+                    cursor = conn.cursor(buffered=True)
+                    
+                    # duplicate check
+                    cursor.execute("""
+                        SELECT id FROM appointments 
+                        WHERE appointment_date = %s AND appointment_time = %s AND status != 'canceled'
+                    """, (data['date'], data['time']))
+                    
+                    if cursor.fetchone():
+                        cursor.close()
+                        conn.close()
+                        return {"response": f"⚠️ That time ({data['time']}) is already taken! Please choose another time.", "requires_action": False}
 
-            # 2. Insert Appointment
-            cursor.execute("""
-                INSERT INTO appointments (student_id, appointment_date, appointment_time, service_type, urgency, reason, booking_mode, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'ai_chatbot', 'pending')
-            """, (
-                user_id, data['appointment_date'], data['appointment_time'], 
-                data['service_type'], data['urgency'], data['reason']
-            ))
-            conn.commit()
-            
-            # Format time nicely for display
-            display_time = datetime.strptime(data['appointment_time'], "%H:%M:%S").strftime("%I:%M %p")
+                    # insert
+                    cursor.execute("""
+                        INSERT INTO appointments (student_id, appointment_date, appointment_time, service_type, urgency, reason, booking_mode, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, 'ai_chatbot', 'pending')
+                    """, (current_user['user_id'], data['date'], data['time'], data['service_type'], data['urgency'], data['reason']))
+                    
+                    conn.commit()
+                    cursor.close()
+                    conn.close()
+                    
+                    # success message + advice if available
+                    success_msg = f"Booked for {data['date']} at {data['time']}! ✅"
+                    if data.get("ai_advice"):
+                        success_msg += f"\n\n💡 Health Tip: {data['ai_advice']}"
+                        
+                    return {"response": success_msg, "requires_action": False}
 
-            final_response = (
-                f"🎉 **Booked Successfully!**\n\n"
-                f"🩺 **Service:** {data['service_type']}\n"
-                f"📅 **Date:** {data['appointment_date']}\n"
-                f"🕒 **Time:** {display_time}\n"
-                f"📝 **Reason:** {data['reason']}\n\n"
-                "See you at the clinic! 💙"
-            )
-            
-            # Reset state for next interaction
-            chat_states[user_id] = {"step": "idle", "data": {}}
-            return {"response": final_response, "requires_action": False}
+                # --- ACTION B: CANCELING ---
+                elif data.get("action") == "cancel_appointment":
+                    appt_id = data.get("appointment_id")
+                    
+                    conn = get_db()
+                    cursor = conn.cursor()
+                    
+                    # verify
+                    cursor.execute("SELECT id FROM appointments WHERE id = %s AND student_id = %s", (appt_id, current_user['user_id']))
+                    
+                    if cursor.fetchone():
+                        cursor.execute("UPDATE appointments SET status = 'canceled' WHERE id = %s", (appt_id,))
+                        conn.commit()
+                        msg = f"Okay, appointment #{appt_id} has been canceled. 🗑️"
+                    else:
+                        msg = f"I couldn't find Appointment #{appt_id}. Please check the list."
+                        
+                    cursor.close()
+                    conn.close()
+                    return {"response": msg, "requires_action": False}
 
-        except Exception as e:
-            print(f"DB Error: {e}")
-            return {"response": "System error. Please try again later.", "requires_action": False}
-        finally:
-            if 'cursor' in locals() and cursor: cursor.close()
-            if 'conn' in locals() and conn: conn.close()
+            except Exception as e:
+                print(f"json processing error: {e}")
+                return {"response": "System error processing your request. Please try again.", "requires_action": False}
 
-    return {"response": "I didn't quite catch that. Try saying 'reset' if you're stuck.", "requires_action": False}
+        # normal reply
+        return {"response": ai_text, "requires_action": False}
+
+    except Exception as e:
+        error_msg = str(e)
+        print(f"ai error: {error_msg}")
+        return {"response": "My AI brain is a bit busy. Please try again in 10 seconds.", "requires_action": False}
 
 if __name__ == "__main__":
     import uvicorn

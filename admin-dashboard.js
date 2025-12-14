@@ -123,8 +123,8 @@ async function onScanSuccess(decodedText, decodedResult) {
                 startScanner(); // restart
             });
         } 
-        // check for specific "already scanned" error
-        else if (data.detail === "ALREADY_SCANNED") {
+        // check for specific "already scanned" error from backend
+        else if (data.detail === "ALREADY_SCANNED" || data.detail === "already_scanned") {
             Swal.fire({
                 icon: 'warning',
                 title: 'ALREADY USED',
@@ -163,7 +163,7 @@ async function loadAppointments() {
         applyFiltersAndSort(); 
     } catch (error) {
         console.error(error);
-        document.getElementById('appointments-list').innerHTML = `<tr><td colspan="6" style="text-align:center; color:red;">Error loading data.</td></tr>`;
+        document.getElementById('appointments-list').innerHTML = `<tr><td colspan="7" style="text-align:center; color:red;">Error loading data.</td></tr>`;
     }
 }
 
@@ -220,7 +220,7 @@ function displayAppointments(data) {
     tbody.innerHTML = '';
 
     if (data.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 20px;">No appointments found matching these criteria.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 20px;">No appointments found matching these criteria.</td></tr>`;
         return;
     }
 
@@ -229,8 +229,11 @@ function displayAppointments(data) {
         const urgencyClass = (urgency.toLowerCase() === 'urgent' || urgency.toLowerCase() === 'high') ? 'color: var(--danger); font-weight:bold;' : 'color: var(--success);';
         
         const statusLabel = apt.status.charAt(0).toUpperCase() + apt.status.slice(1);
-        const showDelete = true; 
         const niceTime = formatTime(apt.appointment_time);
+        
+        // Check booking mode (AI or Standard)
+        const isAI = apt.booking_mode === 'ai_chatbot';
+        const modeBadge = isAI ? '<i class="fas fa-robot" title="Booked by AI" style="color:#9b59b6;"></i> AI' : '<i class="fas fa-user" title="Manual Booking" style="color:#7f8c8d;"></i> Web';
 
         const row = `
             <tr>
@@ -242,11 +245,12 @@ function displayAppointments(data) {
                 <td>${apt.service_type || 'General'}</td>
                 <td><span style="${urgencyClass}">${urgency}</span></td>
                 <td><span class="status-pill ${apt.status}">${statusLabel}</span></td>
+                <td style="text-align:center;">${modeBadge}</td>
                 
                 <td>
                     <div class="action-buttons">
                         <button class="btn-primary" style="padding: 5px 10px; font-size: 0.8rem;" onclick="openAppointmentModal(${apt.id})">View</button>
-                        ${showDelete ? `<button class="btn-delete" onclick="deleteAppointment(${apt.id})"><i class="fas fa-trash"></i></button>` : ''}
+                        <button class="btn-delete" onclick="deleteAppointment(${apt.id})"><i class="fas fa-trash"></i></button>
                     </div>
                 </td>
             </tr>
@@ -288,8 +292,11 @@ function formatDate(d) {
 
 function formatTime(timeStr) {
     if (!timeStr) return "";
-    const [hours, minutes] = timeStr.split(':');
-    let hour = parseInt(hours);
+    // Handle "HH:MM:SS" or "HH:MM"
+    const parts = timeStr.split(':');
+    let hour = parseInt(parts[0]);
+    const minutes = parts[1];
+    
     const ampm = hour >= 12 ? 'PM' : 'AM';
     hour = hour % 12;
     hour = hour ? hour : 12; 
@@ -301,18 +308,22 @@ function openAppointmentModal(id) {
     const apt = allAppointments.find(a => a.id === id);
     if(!apt) return;
     currentAppointmentId = id;
+    
+    // Nice mode label for the modal
+    const modeLabel = apt.booking_mode === 'ai_chatbot' ? 'AI Assistant' : 'Standard Web Form';
+    
     const details = document.getElementById('appointment-details');
     details.innerHTML = `
         <p><strong>Student:</strong> ${apt.student_name}</p>
         <p><strong>Service:</strong> ${apt.service_type}</p>
         <p><strong>Urgency:</strong> ${apt.urgency}</p>
         <p><strong>Reason:</strong> ${apt.reason}</p>
-        <p><strong>Status:</strong> ${apt.status.toUpperCase()}</p>
+        <p><strong>Booking Mode:</strong> ${modeLabel}</p>
+        <p><strong>Status:</strong> <span class="status-pill ${apt.status}">${apt.status.toUpperCase()}</span></p>
         <hr style="margin: 10px 0; border: 0; border-top: 1px solid #eee;">
         ${apt.admin_note ? `<div class="admin-note-box"><strong>Current Note:</strong> ${apt.admin_note}</div>` : ''}
     `;
     
-    // --- fix is here ---
     const actionButtons = document.querySelector('.modal-actions');
     const rejectForm = document.getElementById('reject-form');
     
