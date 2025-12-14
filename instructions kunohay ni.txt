@@ -1,7 +1,3 @@
-# Clinic_app
-System sa Web
-
-
 install python 3.12 kay di mo gana ang 3.14
 - okay ra mag install ug damo na version sa python niya pwede ka mo gamit ug bisad unsa na version 
 - aron magamit ang specific na version mag gamit tag venv, mura nag mag create ug virtual environment kung asa na gi run na command.

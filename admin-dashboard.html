@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard</title>
+    <link rel="stylesheet" href="style.css"> 
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+</head>
+<body style="background: url('images/bg.png') no-repeat center center fixed; background-size: cover;">
+
+    <header class="top-bar">
+        <div class="header-content">
+            <div class="brand">
+                <img src="images/logo.jpg" alt="Logo" style="height: 40px; border-radius: 50%; margin-right: 10px;">
+                <h1>Admin Portal</h1>
+            </div>
+            <div class="user-info">
+                <div class="admin-profile">
+                    <span id="user-name">Loading...</span>
+                    <span id="user-role" class="role-badge">...</span>
+                </div>
+                <button onclick="logout()" class="btn-logout">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <main class="dashboard">
+            <div class="dashboard-tabs">
+                <button class="tab-btn active" onclick="showTab('appointments')">
+                    <i class="fas fa-calendar-check"></i> Appointments
+                </button>
+                <button id="manage-users-tab" class="tab-btn" onclick="showTab('users')">
+                    <i class="fas fa-users-cog"></i> Manage Users
+                </button>
+                <button class="tab-btn" onclick="showTab('scanner')">
+                    <i class="fas fa-qrcode"></i> Scan Ticket
+                </button>
+            </div>
+
+            <div id="appointments-tab" class="tab-content active">
+                <div class="card">
+                    <div class="section-header">
+                        <h2>Appointment Requests</h2>
+                        
+                        <div class="filter-bar" style="display:flex; gap:10px; flex-wrap:wrap;">
+                            <select id="sort-order" onchange="applyFiltersAndSort()" style="padding: 8px; border-radius: 6px; border: 1px solid #ddd;">
+                                <option value="default">Default (Newest First)</option>
+                                <option value="clearance-urgent">Medical Clearance (Urgent)</option>
+                                <option value="consultation-urgent">Medical Consultation (Urgent)</option>
+                                <option value="clearance-normal">Medical Clearance (Normal)</option>
+                                <option value="consultation-normal">Medical Consultation (Normal)</option>
+                            </select>
+
+                            <input type="text" id="search-input" onkeyup="applyFiltersAndSort()" placeholder="Search student name..." style="padding: 8px; border-radius: 6px; border: 1px solid #ddd;">
+                            
+                            <select id="status-filter" onchange="applyFiltersAndSort()" style="padding: 8px; border-radius: 6px; border: 1px solid #ddd;">
+                                <option value="all">All Status</option>
+                                <option value="pending">Pending</option>
+                                <option value="approved">Approved</option>
+                                <option value="rejected">Rejected</option>
+                                <option value="canceled">Canceled</option>
+                                <option value="completed">Completed</option>
+                            </select>
+                            
+                            <button onclick="loadAppointments()" class="btn-refresh" title="Refresh List">
+                                <i class="fas fa-sync-alt"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="data-table" id="appointments-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Student</th>
+                                    <th>Service</th> 
+                                    <th>Urgency</th> 
+                                    <th>Status</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="appointments-list"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="users-tab" class="tab-content">
+                <div class="card">
+                    <div class="section-header">
+                        <h2>Manage Users</h2>
+                        
+                        <div style="display: flex; gap: 10px;">
+                            <select id="user-role-filter" onchange="loadUsers()" style="padding: 8px; border-radius: 6px; border: 1px solid #ddd;">
+                                <option value="all">Show All</option>
+                                <option value="admin">Admins Only</option>
+                                <option value="student">Students Only</option>
+                            </select>
+
+                            <button onclick="showAddUserModal()" class="btn-primary">
+                                <i class="fas fa-plus"></i> Add New Admin
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Email</th>
+                                    <th>Role</th>
+                                    <th>Created At</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="users-list"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="scanner-tab" class="tab-content">
+                <div class="card" style="text-align: center;">
+                    <div class="section-header">
+                        <h2>Scan Student Ticket</h2>
+                    </div>
+                    <p>Use your camera to scan the QR code on the student's ticket.</p>
+                    
+                    <div id="reader" style="width: 500px; margin: 20px auto; border: 1px solid #ddd;"></div>
+                    
+                    <div id="scan-result" style="margin-top: 20px; font-weight: bold; color: var(--primary);"></div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <div id="appointment-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Appointment Details</h2>
+                <span class="close" onclick="closeModal('appointment-modal')">&times;</span>
+            </div>
+            <div id="appointment-details" class="modal-body"></div>
+            
+            <div class="modal-actions" style="display: flex; gap: 10px; margin-top: 20px;">
+                <button onclick="updateAppointmentStatus('approved')" class="btn-primary" style="flex:1; background-color: var(--success);">Approve</button>
+                <button onclick="showRejectForm()" class="btn-logout" style="flex:1;">Reject</button>
+            </div>
+            
+            <div id="reject-form" class="reject-box" style="display:none; margin-top: 15px;">
+                <textarea id="admin-note" class="modal-input" placeholder="Enter reason for rejection..." rows="3" style="width:100%; margin-bottom:10px;"></textarea>
+                <button onclick="updateAppointmentStatus('rejected')" class="btn-logout" style="width:100%; background: #ffebee;">Confirm Rejection</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="add-user-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Add New User</h2>
+                <span class="close" onclick="closeModal('add-user-modal')">&times;</span>
+            </div>
+            <form id="add-user-form" class="modal-body" onsubmit="handleNewUser(event)">
+                <div class="input-group">
+                    <label>Full Name</label>
+                    <input type="text" id="new-full-name" required>
+                </div>
+                <div class="input-group">
+                    <label>Email</label>
+                    <input type="email" id="new-email" required>
+                </div>
+                <div class="input-group">
+                    <label>Role</label>
+                    <select id="new-role" required>
+                        <option value="admin">Admin</option>
+                        <option value="super_admin">Super Admin</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>Password</label>
+                    <input type="password" id="new-password" required minlength="6">
+                </div>
+                <button type="submit" class="btn-primary btn-full">Create User</button>
+            </form>
+        </div>
+    </div>
+
+    <footer class="footer"><p>© 2025 Eastern Visayas State University - Ormoc Campus</p></footer>
+    
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="admin-dashboard.js"></script>
+</body>
+</html>

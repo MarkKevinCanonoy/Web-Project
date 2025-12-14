@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Dashboard</title>
+    <link rel="stylesheet" href="style.css"> 
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+<body style="background: url('images/bg.png') no-repeat center center fixed; background-size: cover;">
+
+    <header class="top-bar">
+        <div class="header-content">
+            <div class="brand">
+                <img src="images/logo.jpg" alt="Logo" style="height: 40px; border-radius: 50%; margin-right: 10px;">
+                <h1>Student Dashboard</h1>
+            </div>
+            <div class="user-info">
+                <span id="user-name">Welcome, Student</span>
+                <button onclick="logout()" class="btn-logout">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <main class="dashboard">
+            
+            <div class="dashboard-tabs">
+                <button class="tab-btn active" onclick="showTab('booking')">
+                    <i class="fas fa-calendar-plus"></i> Book Appointment
+                </button>
+                <button class="tab-btn" onclick="showTab('chatbot')">
+                    <i class="fas fa-robot"></i> AI Assistant
+                </button>
+                <button class="tab-btn" onclick="showTab('appointments')">
+                    <i class="fas fa-list"></i> My Appointments
+                </button>
+            </div>
+
+            <div id="booking-tab" class="tab-content active">
+                <div class="booking-card-wrapper">
+                    <div class="booking-header-banner">
+                        <div class="banner-icon">
+                            <i class="fas fa-notes-medical"></i>
+                        </div>
+                        <div class="banner-text">
+                            <h2>Book Appointment</h2>
+                            <p>Schedule a visit with the school clinic.</p>
+                        </div>
+                    </div>
+                    
+                    <form id="booking-form" onsubmit="handleBooking(event)" class="booking-form-body">
+                        <div class="form-row">
+                            <div class="input-group">
+                                <label><i class="fas fa-stethoscope"></i> Service Type</label>
+                                <select id="book-type" required>
+                                    <option value="" disabled selected>Select service...</option>
+                                    <option value="Medical Consultation">Medical Consultation</option>
+                                    <option value="Medical Clearance">Medical Clearance</option>
+                                </select>
+                            </div>
+                            <div class="input-group">
+                                <label><i class="far fa-calendar-alt"></i> Date</label>
+                                <input type="date" id="book-date" required>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="input-group">
+                                <label><i class="far fa-clock"></i> Preferred Time</label>
+                                <input type="time" id="book-time" required>
+                            </div>
+                            <div class="input-group">
+                                <label><i class="fas fa-exclamation-circle"></i> Urgency</label>
+                                <select id="book-urgency">
+                                    <option value="Normal">Normal</option>
+                                    <option value="Urgent">Urgent</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <label><i class="fas fa-comment-medical"></i> Reason for Visit</label>
+                            <textarea id="book-reason" rows="3" placeholder="Please describe your symptoms or concern..." required></textarea>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="submit" class="btn-primary btn-submit-booking">
+                                Confirm Booking <i class="fas fa-arrow-right"></i>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div id="chatbot-tab" class="tab-content">
+                <div class="chat-wrapper">
+                    <div class="chat-header">
+                        <h2>Clinic AI Assistant</h2>
+                        <span style="font-size: 0.8rem;">● Online</span>
+                    </div>
+                    <div class="chat-container">
+                        <div id="chat-messages" class="chat-messages"></div>
+                        <div class="chat-input-container">
+                            <input type="text" id="chat-input" placeholder="Type your message..." onkeypress="handleEnter(event)">
+                            <button onclick="sendChatMessage()" class="btn-send">
+                                <i class="fas fa-paper-plane"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="appointments-tab" class="tab-content">
+                <div class="section-header">
+                    <h2>My Appointments</h2>
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <select id="status-filter" onchange="filterAppointments()" style="padding: 8px; border-radius:6px; border:1px solid #ddd;">
+                            <option value="all">All Status</option>
+                            <option value="pending">Pending</option>
+                            <option value="approved">Approved</option>
+                            <option value="rejected">Rejected</option>
+                            <option value="canceled">Canceled</option>
+                            <option value="completed">Completed</option>
+                        </select>
+                        <button onclick="loadAppointments()" class="btn-refresh">
+                            <i class="fas fa-sync-alt"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+                <div id="appointments-list" class="appointments-grid"></div>
+            </div>
+
+        </main>
+    </div>
+
+    <div id="ticket-template" style="position: absolute; left: -9999px; width: 400px; padding: 20px; font-family: 'Segoe UI', sans-serif; border: 2px solid #333; background: white; border-radius: 10px;">
+        <div style="text-align: center; border-bottom: 2px solid #1E88E5; padding-bottom: 10px; margin-bottom: 20px;">
+            <h2 style="margin: 0; color: #1E88E5; font-size: 1.5rem;">CLINIC PASS</h2>
+            <p style="margin: 5px 0; font-size: 0.9rem; color: #666;">Official Entry Ticket</p>
+        </div>
+        
+        <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+            <p style="margin: 5px 0;"><strong>Name:</strong> <span id="pdf-name">Student Name</span></p>
+            <p style="margin: 5px 0;"><strong>Service:</strong> <span id="pdf-service">Checkup</span></p>
+            <p style="margin: 5px 0;"><strong>Date:</strong> <span id="pdf-date">2025-10-20</span></p>
+            <p style="margin: 5px 0;"><strong>Time:</strong> <span id="pdf-time">10:00 AM</span></p>
+        </div>
+
+        <div style="display: flex; justify-content: center; margin-bottom: 10px;">
+            <div id="pdf-qr-code" style="padding: 10px; background: white; border: 1px solid #ddd;"></div> 
+        </div>
+    
+        <div style="text-align: center; font-size: 0.8rem; color: #888;">
+            <p>Scan this at the admin desk.</p>
+            <p>ID: <span id="pdf-id">#123</span></p>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <p>© 2025 Eastern Visayas State University - Ormoc Campus</p>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="student-dashboard.js"></script>
+</body>
+</html>
