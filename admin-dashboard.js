@@ -1,7 +1,7 @@
 const API_URL = 'http://localhost:8000/api';
 let allAppointments = [];
 let currentAppointmentId = null;
-let html5QrcodeScanner = null; // scanner variable
+let html5QrcodeScanner = null;
 
 // authentication check
 const token = localStorage.getItem('token');
@@ -24,7 +24,9 @@ document.getElementById('user-name').textContent = fullName;
 document.getElementById('user-role').textContent = role === 'super_admin' ? 'Super Admin' : 'Admin';
 
 document.addEventListener('DOMContentLoaded', () => {
-    loadAppointments();
+    // Default to queue tab on load
+    loadQueue();
+    loadAppointments(); // load all data in background
     if(role === 'super_admin') {
         loadUsers();
     } else {
@@ -39,7 +41,6 @@ function showTab(tabName) {
     document.getElementById(tabName + '-tab').style.display = 'block';
     event.currentTarget.classList.add('active');
     
-    // scanner logic
     if (tabName === 'scanner') {
         startScanner();
     } else {
@@ -48,6 +49,7 @@ function showTab(tabName) {
 
     if (tabName === 'appointments') loadAppointments();
     if (tabName === 'users') loadUsers();
+    if (tabName === 'queue') loadQueue();
 }
 
 function logout() {
@@ -67,79 +69,200 @@ function logout() {
     });
 }
 
-// --- scanner logic ---
+// ==========================================
+//  QUEUE LOGIC (UPDATED WITH REASON)
+// ==========================================
+
+async function loadQueue() {
+    const container = document.getElementById('queue-display-area');
+    container.innerHTML = '<p style="text-align:center;">Loading queue...</p>';
+
+    try {
+        // Fetch fresh data
+        const response = await fetch(`${API_URL}/appointments`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await response.json();
+
+        // 1. Filter: Only APPROVED appointments
+        let queue = data.filter(a => a.status === 'approved');
+
+        // 2. Sort: Date then Time (Oldest/Closest first)
+        queue.sort((a, b) => {
+            const dateA = new Date(a.appointment_date + 'T' + a.appointment_time);
+            const dateB = new Date(b.appointment_date + 'T' + b.appointment_time);
+            return dateA - dateB;
+        });
+
+        renderQueue(queue);
+
+    } catch (e) {
+        console.error(e);
+        container.innerHTML = '<p style="color:red; text-align:center;">Error loading queue.</p>';
+    }
+}
+
+function renderQueue(queue) {
+    const container = document.getElementById('queue-display-area');
+    
+    if (queue.length === 0) {
+        container.innerHTML = `
+            <div class="empty-queue">
+                <i class="fas fa-mug-hot"></i>
+                <h3>No approved appointments in queue.</h3>
+                <p>Enjoy your break!</p>
+            </div>
+        `;
+        return;
+    }
+
+    // Isolate the first person (Next in line)
+    const nextPatient = queue[0];
+    const waitingList = queue.slice(1); // everyone else
+
+    const niceTime = formatTime(nextPatient.appointment_time);
+    const niceDate = formatDate(nextPatient.appointment_date);
+
+    let html = `
+        <div class="hero-card">
+            <div class="hero-time">${niceTime}</div>
+            <div class="hero-name">${nextPatient.student_name}</div>
+            <div class="hero-details">
+                <i class="fas fa-calendar-day"></i> ${niceDate} &nbsp;|&nbsp; 
+                <i class="fas fa-stethoscope"></i> ${nextPatient.service_type}
+            </div>
+            
+            <div style="background: #e3f2fd; color: #1565c0; padding: 10px; border-radius: 8px; margin-bottom: 20px; font-style: italic;">
+                "${nextPatient.reason}"
+            </div>
+            
+            <div class="hero-actions">
+                <button onclick="handleNoShow(${nextPatient.id})" class="btn-noshow">
+                    <i class="fas fa-user-slash"></i> No Show
+                </button>
+                <button onclick="handleCompleteQueue(${nextPatient.id})" class="btn-complete-hero">
+                    <i class="fas fa-check-circle"></i> Complete Visit
+                </button>
+            </div>
+        </div>
+    `;
+
+    // WAIT LIST
+    if (waitingList.length > 0) {
+        html += `<div class="queue-list-header">Up Next (${waitingList.length})</div>`;
+        
+        waitingList.forEach(apt => {
+            html += `
+                <div class="queue-item">
+                    <div>
+                        <h4>${apt.student_name}</h4>
+                        <p>${apt.service_type} • ${formatDate(apt.appointment_date)}</p>
+                        <p style="font-size: 0.85rem; color: #666; margin-top: 2px;"><em>"${apt.reason}"</em></p>
+                    </div>
+                    <div class="queue-time">
+                        ${formatTime(apt.appointment_time)}
+                    </div>
+                </div>
+            `;
+        });
+    }
+
+    container.innerHTML = html;
+}
+
+// Logic for "No Show" button
+function handleNoShow(id) {
+    Swal.fire({
+        title: 'Mark as No Show?',
+        text: "This will remove the time restriction and allow others to book.",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#607d8b',
+        confirmButtonText: 'Yes, No Show'
+    }).then(async (result) => {
+        if (result.isConfirmed) {
+            await updateStatus(id, 'noshow', 'Student did not appear for appointment.');
+            loadQueue(); // refresh UI
+        }
+    });
+}
+
+function handleCompleteQueue(id) {
+    Swal.fire({
+        title: 'Complete Visit?',
+        icon: 'success',
+        showCancelButton: true,
+        confirmButtonColor: '#2ecc71',
+        confirmButtonText: 'Yes, Completed'
+    }).then(async (result) => {
+        if (result.isConfirmed) {
+            await updateStatus(id, 'completed', 'Completed via Queue Dashboard');
+            loadQueue(); // refresh UI
+        }
+    });
+}
+
+async function updateStatus(id, status, note) {
+    try {
+        await fetch(`${API_URL}/appointments/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ status: status, admin_note: note })
+        });
+        
+        const Toast = Swal.mixin({
+            toast: true, position: 'top-end', showConfirmButton: false, timer: 2000
+        });
+        Toast.fire({ icon: 'success', title: 'Status updated' });
+
+    } catch (e) { console.error(e); }
+}
+
+// ==========================================
+//  EXISTING LOGIC
+// ==========================================
 
 function startScanner() {
     if (html5QrcodeScanner) return; 
-
-    // start camera
-    html5QrcodeScanner = new Html5QrcodeScanner(
-        "reader", { fps: 10, qrbox: 250 }
-    );
+    html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 250 });
     html5QrcodeScanner.render(onScanSuccess, onScanFailure);
 }
 
 function stopScanner() {
     if (html5QrcodeScanner) {
-        html5QrcodeScanner.clear().catch(error => {
-            console.error("Failed to clear scanner", error);
-        });
+        html5QrcodeScanner.clear().catch(error => { console.error("Failed to clear scanner", error); });
         html5QrcodeScanner = null;
     }
 }
 
 async function onScanSuccess(decodedText, decodedResult) {
-    stopScanner(); // stop scanning once found
-    
+    stopScanner();
     const appointmentId = decodedText;
     document.getElementById('scan-result').innerHTML = `Processing ID: ${appointmentId}...`;
 
     try {
-        // update status to completed
         const response = await fetch(`${API_URL}/appointments/${appointmentId}`, {
             method: 'PUT',
-            headers: { 
-                'Content-Type': 'application/json', 
-                'Authorization': `Bearer ${token}` 
-            },
-            body: JSON.stringify({ 
-                status: 'completed', 
-                admin_note: 'Verified via QR Scan' 
-            })
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ status: 'completed', admin_note: 'Verified via QR Scan' })
         });
-
         const data = await response.json();
 
-        // check if success
         if (response.ok) {
             Swal.fire({
-                icon: 'success',
-                title: 'Verified!',
-                text: `Student is cleared for entry. (ID: ${appointmentId})`,
-                timer: 2500,
-                showConfirmButton: false
+                icon: 'success', title: 'Verified!', text: `Student cleared. (ID: ${appointmentId})`,
+                timer: 2500, showConfirmButton: false
             }).then(() => {
                 document.getElementById('scan-result').innerHTML = "Ready for next student.";
-                startScanner(); // restart
+                startScanner();
             });
-        } 
-        // check for specific "already scanned" error from backend
-        else if (data.detail === "ALREADY_SCANNED" || data.detail === "already_scanned") {
-            Swal.fire({
-                icon: 'warning',
-                title: 'ALREADY USED',
-                text: 'This ticket has already been scanned!',
-                confirmButtonColor: '#f39c12'
-            }).then(() => {
-                startScanner(); // restart so admin can scan the next one
-            });
-        }
-        else {
-            // generic error
+        } else if (data.detail === "already_scanned") {
+            Swal.fire({ icon: 'warning', title: 'ALREADY USED', confirmButtonColor: '#f39c12' })
+            .then(() => startScanner());
+        } else {
             Swal.fire('Error', data.detail || 'Server Error', 'error');
             setTimeout(startScanner, 2000); 
         }
-
     } catch (e) {
         console.error(e);
         Swal.fire('Error', 'Connection Error', 'error');
@@ -147,17 +270,11 @@ async function onScanSuccess(decodedText, decodedResult) {
     }
 }
 
-function onScanFailure(error) {
-    // console.warn(`code scan error = ${error}`);
-}
-
-// --- appointment logic ---
+function onScanFailure(error) {}
 
 async function loadAppointments() {
     try {
-        const response = await fetch(`${API_URL}/appointments`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const response = await fetch(`${API_URL}/appointments`, { headers: { 'Authorization': `Bearer ${token}` } });
         if (!response.ok) throw new Error("Failed to fetch");
         allAppointments = await response.json();
         applyFiltersAndSort(); 
@@ -180,36 +297,21 @@ function applyFiltersAndSort() {
         const service = (apt.service_type || '').toLowerCase();
         const urgency = (apt.urgency || '').toLowerCase();
 
-        if (sortChoice === 'clearance-urgent') {
-            matchesType = service.includes('clearance') && (urgency === 'urgent' || urgency === 'high');
-        } else if (sortChoice === 'consultation-urgent') {
-            matchesType = service.includes('consultation') && (urgency === 'urgent' || urgency === 'high');
-        } else if (sortChoice === 'clearance-normal') {
-            matchesType = service.includes('clearance') && (urgency === 'normal' || urgency === 'low');
-        } else if (sortChoice === 'consultation-normal') {
-            matchesType = service.includes('consultation') && (urgency === 'normal' || urgency === 'low');
-        }
+        if (sortChoice === 'clearance-urgent') matchesType = service.includes('clearance') && urgency.includes('urgent');
+        else if (sortChoice === 'consultation-urgent') matchesType = service.includes('consultation') && urgency.includes('urgent');
+        else if (sortChoice === 'clearance-normal') matchesType = service.includes('clearance') && urgency.includes('normal');
+        else if (sortChoice === 'consultation-normal') matchesType = service.includes('consultation') && urgency.includes('normal');
 
         return matchesStatus && matchesSearch && matchesType;
     });
 
-    // --- smart sort logic ---
-    const statusPriority = {
-        'pending': 1,
-        'approved': 2,
-        'completed': 3,
-        'rejected': 3,
-        'canceled': 3
-    };
+    const statusPriority = { 'pending': 1, 'approved': 2, 'completed': 3, 'rejected': 3, 'canceled': 3, 'noshow': 3 };
 
     filtered.sort((a, b) => {
         const priorityA = statusPriority[a.status] || 99;
         const priorityB = statusPriority[b.status] || 99;
-
-        if (priorityA !== priorityB) {
-            return priorityA - priorityB; 
-        }
-        return new Date(b.appointment_date) - new Date(a.appointment_date);
+        if (priorityA !== priorityB) return priorityA - priorityB; 
+        return new Date(b.appointment_date + 'T' + b.appointment_time) - new Date(a.appointment_date + 'T' + a.appointment_time);
     });
 
     displayAppointments(filtered);
@@ -220,33 +322,30 @@ function displayAppointments(data) {
     tbody.innerHTML = '';
 
     if (data.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 20px;">No appointments found matching these criteria.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 20px;">No appointments found.</td></tr>`;
         return;
     }
 
     data.forEach(apt => {
         const urgency = apt.urgency || 'Low';
-        const urgencyClass = (urgency.toLowerCase() === 'urgent' || urgency.toLowerCase() === 'high') ? 'color: var(--danger); font-weight:bold;' : 'color: var(--success);';
-        
-        const statusLabel = apt.status.charAt(0).toUpperCase() + apt.status.slice(1);
+        const urgencyClass = (urgency.toLowerCase() === 'urgent') ? 'color: var(--danger); font-weight:bold;' : 'color: var(--success);';
+        const statusLabel = apt.status.toUpperCase();
         const niceTime = formatTime(apt.appointment_time);
         
-        // Check booking mode (AI or Standard)
+        let statusColor = '';
+        if(apt.status === 'noshow') statusColor = 'background:#607d8b; color:white;';
+        
         const isAI = apt.booking_mode === 'ai_chatbot';
-        const modeBadge = isAI ? '<i class="fas fa-robot" title="Booked by AI" style="color:#9b59b6;"></i> AI' : '<i class="fas fa-user" title="Manual Booking" style="color:#7f8c8d;"></i> Web';
+        const modeBadge = isAI ? '<i class="fas fa-robot" style="color:#9b59b6;"></i> AI' : '<i class="fas fa-user" style="color:#7f8c8d;"></i> Web';
 
         const row = `
             <tr>
                 <td>${formatDate(apt.appointment_date)}<br><small>${niceTime}</small></td>
-                <td>
-                    <span style="font-weight:bold">${apt.student_name}</span><br>
-                    <small style="color:#666">${apt.student_email || ''}</small>
-                </td>
+                <td><span style="font-weight:bold">${apt.student_name}</span><br><small style="color:#666">${apt.student_email || ''}</small></td>
                 <td>${apt.service_type || 'General'}</td>
                 <td><span style="${urgencyClass}">${urgency}</span></td>
-                <td><span class="status-pill ${apt.status}">${statusLabel}</span></td>
+                <td><span class="status-pill ${apt.status}" style="${statusColor}">${statusLabel}</span></td>
                 <td style="text-align:center;">${modeBadge}</td>
-                
                 <td>
                     <div class="action-buttons">
                         <button class="btn-primary" style="padding: 5px 10px; font-size: 0.8rem;" onclick="openAppointmentModal(${apt.id})">View</button>
@@ -261,59 +360,40 @@ function displayAppointments(data) {
 
 async function deleteAppointment(id) {
     Swal.fire({
-        title: 'Delete Record?',
-        text: "This action cannot be undone.",
-        icon: 'warning',
-        showCancelButton: true,
-        confirmButtonColor: '#d33',
-        cancelButtonColor: '#3085d6',
-        confirmButtonText: 'Yes, delete it'
+        title: 'Delete Record?', text: "Cannot be undone.", icon: 'warning',
+        showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Yes, delete it'
     }).then(async (result) => {
         if (result.isConfirmed) {
             try {
                 const response = await fetch(`${API_URL}/appointments/${id}`, {
-                    method: 'DELETE',
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` }
                 });
-                if(response.ok) {
-                    Swal.fire('Deleted!', 'Record has been removed.', 'success');
-                    loadAppointments();
-                } else {
-                    Swal.fire('Error', 'Failed to delete record.', 'error');
-                }
+                if(response.ok) { Swal.fire('Deleted!', 'Removed.', 'success'); loadAppointments(); loadQueue(); } 
+                else { Swal.fire('Error', 'Failed to delete.', 'error'); }
             } catch(e) { console.error(e); }
         }
     });
 }
 
-function formatDate(d) {
-    return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
+function formatDate(d) { return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
 
 function formatTime(timeStr) {
     if (!timeStr) return "";
-    // Handle "HH:MM:SS" or "HH:MM"
     const parts = timeStr.split(':');
     let hour = parseInt(parts[0]);
     const minutes = parts[1];
-    
     const ampm = hour >= 12 ? 'PM' : 'AM';
-    hour = hour % 12;
-    hour = hour ? hour : 12; 
+    hour = hour % 12; hour = hour ? hour : 12; 
     return `${hour}:${minutes} ${ampm}`;
 }
 
-// [UPDATED] logic to hide actions if not pending
 function openAppointmentModal(id) {
     const apt = allAppointments.find(a => a.id === id);
     if(!apt) return;
     currentAppointmentId = id;
-    
-    // Nice mode label for the modal
     const modeLabel = apt.booking_mode === 'ai_chatbot' ? 'AI Assistant' : 'Standard Web Form';
     
-    const details = document.getElementById('appointment-details');
-    details.innerHTML = `
+    document.getElementById('appointment-details').innerHTML = `
         <p><strong>Student:</strong> ${apt.student_name}</p>
         <p><strong>Service:</strong> ${apt.service_type}</p>
         <p><strong>Urgency:</strong> ${apt.urgency}</p>
@@ -325,18 +405,8 @@ function openAppointmentModal(id) {
     `;
     
     const actionButtons = document.querySelector('.modal-actions');
-    const rejectForm = document.getElementById('reject-form');
-    
-    // reset visibility
-    rejectForm.style.display = 'none';
-
-    // if status is NOT pending, hide the approve/reject buttons
-    if (apt.status !== 'pending') {
-        actionButtons.style.display = 'none';
-    } else {
-        actionButtons.style.display = 'flex'; // show them if pending
-    }
-
+    document.getElementById('reject-form').style.display = 'none';
+    actionButtons.style.display = (apt.status === 'pending') ? 'flex' : 'none';
     document.getElementById('appointment-modal').style.display = 'flex';
 }
 
@@ -345,129 +415,49 @@ function showRejectForm() { document.getElementById('reject-form').style.display
 
 async function updateAppointmentStatus(status) {
     const note = document.getElementById('admin-note').value;
-    
     await fetch(`${API_URL}/appointments/${currentAppointmentId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ status: status, admin_note: note })
     });
-    
     closeModal('appointment-modal');
-    
-    Swal.fire({
-        icon: 'success',
-        title: 'Updated!',
-        text: `Appointment marked as ${status}.`,
-        timer: 1500,
-        showConfirmButton: false
-    });
-    
-    loadAppointments();
+    Swal.fire({ icon: 'success', title: 'Updated!', timer: 1500, showConfirmButton: false });
+    loadAppointments(); loadQueue();
 }
-
-// --- user management logic ---
 
 async function loadUsers() {
     try {
         const response = await fetch(`${API_URL}/users`, { headers: { 'Authorization': `Bearer ${token}` } });
         let users = await response.json();
-        
-        const filterElement = document.getElementById('user-role-filter');
-        const filter = filterElement ? filterElement.value : 'all';
-
-        if (filter === 'student') {
-            users = users.filter(u => u.role === 'student');
-        } else if (filter === 'admin') {
-            users = users.filter(u => u.role === 'admin' || u.role === 'super_admin');
-        }
-
+        const filter = document.getElementById('user-role-filter') ? document.getElementById('user-role-filter').value : 'all';
+        if (filter === 'student') users = users.filter(u => u.role === 'student');
+        else if (filter === 'admin') users = users.filter(u => u.role === 'admin' || u.role === 'super_admin');
         const tbody = document.getElementById('users-list');
         tbody.innerHTML = '';
-        
-        if (users.length === 0) {
-             tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding: 20px;">No users found.</td></tr>`;
-             return;
-        }
-
+        if (users.length === 0) { tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No users found.</td></tr>`; return; }
         users.forEach(u => {
-            let roleColor = '#333';
-            let roleLabel = 'Student';
-
-            if (u.role === 'student') {
-                roleColor = 'green';
-                roleLabel = 'Student';
-            } else if (u.role === 'super_admin') {
-                roleColor = 'purple';
-                roleLabel = 'Super Admin';
-            } else {
-                roleColor = 'blue';
-                roleLabel = 'Admin';
-            }
-
-            tbody.insertAdjacentHTML('beforeend', `
-                <tr>
-                    <td>${u.full_name}</td>
-                    <td>${u.email}</td>
-                    <td><span style="color: ${roleColor}; font-weight:bold;">${roleLabel}</span></td>
-                    <td>${new Date(u.created_at).toLocaleDateString()}</td>
-                    <td><button onclick="deleteUser(${u.id})" class="btn-delete"><i class="fas fa-trash"></i></button></td>
-                </tr>
-            `);
+            let roleLabel = u.role === 'student' ? 'Student' : (u.role === 'super_admin' ? 'Super Admin' : 'Admin');
+            let roleColor = u.role === 'student' ? 'green' : 'blue';
+            tbody.insertAdjacentHTML('beforeend', `<tr><td>${u.full_name}</td><td>${u.email}</td><td><span style="color:${roleColor};font-weight:bold;">${roleLabel}</span></td><td>${new Date(u.created_at).toLocaleDateString()}</td><td><button onclick="deleteUser(${u.id})" class="btn-delete"><i class="fas fa-trash"></i></button></td></tr>`);
         });
     } catch (e) { console.error(e); }
 }
 
 async function deleteUser(id) {
-    Swal.fire({
-        title: 'Delete User?',
-        text: "This will also delete their appointments.",
-        icon: 'warning',
-        showCancelButton: true,
-        confirmButtonColor: '#d33',
-        cancelButtonColor: '#3085d6',
-        confirmButtonText: 'Yes, delete user'
-    }).then(async (result) => {
-        if (result.isConfirmed) {
-            try {
-                const response = await fetch(`${API_URL}/users/${id}`, { 
-                    method: 'DELETE', 
-                    headers: { 'Authorization': `Bearer ${token}` } 
-                });
-                
-                if (response.ok) {
-                    Swal.fire('Deleted!', 'User has been removed.', 'success');
-                    loadUsers();
-                } else {
-                    const data = await response.json();
-                    Swal.fire('Error', data.detail || "Failed to delete user.", 'error');
-                }
-            } catch(e) {
-                Swal.fire('Error', "Server connection error.", 'error');
-            }
+    Swal.fire({ title: 'Delete User?', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Yes' }).then(async (res) => {
+        if (res.isConfirmed) {
+            const response = await fetch(`${API_URL}/users/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
+            if (response.ok) { Swal.fire('Deleted!', 'Removed.', 'success'); loadUsers(); } 
+            else Swal.fire('Error', 'Failed.', 'error');
         }
     });
 }
 
 function showAddUserModal() { document.getElementById('add-user-modal').style.display = 'flex'; }
-
 async function handleNewUser(e) {
     e.preventDefault();
-    const body = {
-        full_name: document.getElementById('new-full-name').value,
-        email: document.getElementById('new-email').value,
-        password: document.getElementById('new-password').value,
-        role: document.getElementById('new-role').value
-    };
-    const res = await fetch(`${API_URL}/admin/create-user`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify(body)
-    });
-    if(res.ok) { 
-        Swal.fire('Success', 'User created successfully.', 'success');
-        closeModal('add-user-modal'); 
-        loadUsers(); 
-    } else { 
-        Swal.fire('Error', 'Failed to create user. Email might exist.', 'error'); 
-    }
+    const body = { full_name: document.getElementById('new-full-name').value, email: document.getElementById('new-email').value, password: document.getElementById('new-password').value, role: document.getElementById('new-role').value };
+    const res = await fetch(`${API_URL}/admin/create-user`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify(body) });
+    if(res.ok) { Swal.fire('Success', 'User created.', 'success'); closeModal('add-user-modal'); loadUsers(); } 
+    else Swal.fire('Error', 'Failed.', 'error');
 }

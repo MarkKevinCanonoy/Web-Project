@@ -3,13 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List, Dict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dt_time
 import mysql.connector
 from mysql.connector import Error
 import bcrypt
 import jwt
 import os
 import json
+import time 
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -27,7 +28,7 @@ if not API_KEY:
     print("warning: google_api_key not found in .env file")
 else:
     genai.configure(api_key=API_KEY)
-    # using 'lite' model for speed
+    # Keeping your preferred model
     model = genai.GenerativeModel('gemma-3-12b-it')
 
 # 4. database config
@@ -38,39 +39,33 @@ DB_CONFIG = {
     'database': 'school_clinic'
 }
 
-# --- OPTIMIZATION: SMART AI INSTRUCTIONS ---
-# I updated this to handle one-liners, time conversion, and medical advice.
+# --- OPTIMIZATION: REAL RECEPTIONIST PERSONA ---
 
 BASE_INSTRUCTION = """
-ROLE: You are a smart, empathetic School Clinic Receptionist. 
-You can book appointments, cancel them, and give basic health advice.
+SYSTEM: You are the School Clinic Receptionist (Nurse Joy).
+PERSONA: Warm, caring, efficient, and professional.
+GOAL: Book appointments or give basic home-remedy advice.
 
-YOUR RULES:
-1. **One-Liner Parsing:** If the user gives all info at once (e.g., "Book checkup tomorrow 2pm for headache"), DO NOT ask questions. Just output the Booking JSON immediately.
-2. **Time Conversion:** ALWAYS convert natural times to 24-hour format.
-   - "2pm" -> "14:00:00"
-   - "2 in the afternoon" -> "14:00:00"
-   - "10am" -> "10:00:00"
-3. **Medical Advice:** If the user mentions symptoms (headache, fever, stomach ache), briefly suggest a simple home remedy (water, rest, breathing) while they wait for the appointment.
-   - *Disclaimer:* Always imply you are an AI, not a doctor.
-4. **Context Awareness:** Look at the "CONTEXT" list below. 
-   - If the user says "Cancel my appointment" -> List the IDs and Dates.
-   - If the user simply says a number (e.g., "5") and they have an appointment with ID 5, assume they want to CANCEL it.
+RULES:
+1. **Be Human:** Use natural language. Say "Oh no, I hope you feel better!" if they are sick.
+2. **One-Liner:** If user says "Book checkup tomorrow 2pm", output JSON immediately.
+3. **Time:** Convert "2pm" -> "14:00:00".
+4. **Context:** Check "EXISTING APPOINTMENTS" below. If they say "Cancel it", use the ID from there.
 
-🔴 OUTPUT FORMAT (JSON ONLY for Actions):
+🔴 CRITICAL: FOR ACTIONS, OUTPUT RAW JSON ONLY. NO MARKDOWN.
 
-[ACTION 1: BOOKING] 
+[BOOKING FORMAT]
 {
   "action": "book_appointment",
   "date": "YYYY-MM-DD",
   "time": "HH:MM:00",
-  "reason": "extracted reason",
-  "service_type": "Medical Consultation" (or "Medical Clearance"), 
-  "urgency": "Normal" (or "Urgent" if pain is severe),
-  "ai_advice": "Drink some water and rest your eyes." (Optional: Add advice here if they are sick)
+  "reason": "short reason",
+  "service_type": "Medical Consultation", 
+  "urgency": "Normal",
+  "ai_advice": "Short friendly advice."
 }
 
-[ACTION 2: CANCELING]
+[CANCEL FORMAT]
 {
   "action": "cancel_appointment",
   "appointment_id": 123
@@ -140,6 +135,55 @@ def create_default_users():
     finally:
         cursor.close()
         conn.close()
+
+# --- [FIXED] VALIDATION FUNCTION ---
+# Used by both Manual Booking and AI.
+def validate_booking_rules(cursor, date_str, time_str):
+    """
+    Returns None if valid.
+    Returns error message string if invalid.
+    """
+    
+    # 1. Parse Time
+    try:
+        if len(time_str) == 5:
+            time_str += ":00"
+        booking_time = datetime.strptime(time_str, "%H:%M:%S").time()
+    except ValueError:
+        return "Invalid time format."
+
+    # 2. Clinic Hours Logic
+    # 12:00 PM is Lunch (Closed)
+    if booking_time.hour == 12:
+        return "Clinic is closed for lunch from 12:00 PM to 1:00 PM."
+    
+    # 7:00 PM (19:00) onwards is Closed
+    if booking_time.hour >= 19:
+        return "Clinic is closed. Operations end at 7:00 PM."
+
+    # Optional: Start Time (e.g., 8:00 AM)
+    if booking_time.hour < 8:
+        return "Clinic opens at 8:00 AM."
+
+    # 3. The 1-Hour Gap Logic (SQL)
+    # We check if the requested time matches any existing appointment within +/- 59 minutes.
+    # We only check 'pending' or 'approved' statuses.
+    cursor.execute("""
+        SELECT id, appointment_time FROM appointments 
+        WHERE appointment_date = %s 
+        AND status IN ('pending', 'approved')
+        AND (
+            TIME_TO_SEC(TIMEDIFF(appointment_time, %s)) > -3600 
+            AND 
+            TIME_TO_SEC(TIMEDIFF(appointment_time, %s)) < 3600
+        )
+    """, (date_str, time_str, time_str))
+    
+    conflict = cursor.fetchone()
+    if conflict:
+        return f"Time slot conflict! There is already an appointment around {conflict['appointment_time']}. Please leave a 1-hour gap."
+
+    return None # No errors
 
 # --- main app setup ---
 app = FastAPI()
@@ -291,12 +335,22 @@ def get_appointments(current_user = Depends(get_current_user)):
 
 @app.post("/api/appointments")
 def create_appointment(appointment: AppointmentCreate, current_user = Depends(get_current_user)):
+    # 1. check if user is a student
     if current_user['role'] != 'student':
         raise HTTPException(status_code=403, detail="only students can book appointments")
     
     conn = get_db()
-    cursor = conn.cursor()
+    # [FIX] Added buffered=True to prevent "Unread result found" error
+    cursor = conn.cursor(dictionary=True, buffered=True) 
     try:
+        # 2. Call Validation
+        error_message = validate_booking_rules(cursor, appointment.appointment_date, appointment.appointment_time)
+        
+        if error_message:
+            # We don't need to close cursor here because 'finally' block handles it
+            raise HTTPException(status_code=400, detail=error_message)
+
+        # 3. insert
         cursor.execute("""
             INSERT INTO appointments (student_id, appointment_date, appointment_time, service_type, urgency, reason, booking_mode, status)
             VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
@@ -311,6 +365,7 @@ def create_appointment(appointment: AppointmentCreate, current_user = Depends(ge
         ))
         conn.commit()
         return {"message": "appointment booked successfully", "id": cursor.lastrowid}
+
     except Error as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -323,7 +378,7 @@ def update_appointment(appointment_id: int, update: AppointmentUpdate, current_u
         raise HTTPException(status_code=403, detail="only admins can update appointments")
     
     conn = get_db()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(dictionary=True, buffered=True)
     try:
         cursor.execute("SELECT status FROM appointments WHERE id = %s", (appointment_id,))
         current_appt = cursor.fetchone()
@@ -349,7 +404,7 @@ def update_appointment(appointment_id: int, update: AppointmentUpdate, current_u
 @app.delete("/api/appointments/{appointment_id}")
 def delete_or_cancel_appointment(appointment_id: int, current_user = Depends(get_current_user)):
     conn = get_db()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(dictionary=True, buffered=True)
     try:
         cursor.execute("SELECT student_id, status FROM appointments WHERE id = %s", (appointment_id,))
         appt = cursor.fetchone()
@@ -416,19 +471,13 @@ def delete_user(user_id: int, current_user = Depends(get_current_user)):
         conn.close()
 
 # ==========================================
-#  SMART AI CHATBOT V2
+#  SMART AI CHATBOT V2 (OPTIMIZED)
 # ==========================================
 
 @app.post("/api/chat")
 async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_user)):
-    """
-    Enhanced AI Chatbot:
-    - Supports One-Liner Booking ("Book checkup tomorrow 2pm")
-    - Smart Cancellation ("Cancel #5")
-    - Medical Advice ("My head hurts" -> Advice)
-    """
     conn = get_db()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor(dictionary=True, buffered=True)
 
     # step 1: get appointments context
     try:
@@ -443,7 +492,6 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
         appt_list_text = ""
         if active_appts:
             for appt in active_appts:
-                # Format: "ID 5: 2025-10-20 at 14:00"
                 appt_list_text += f"- ID {appt['id']}: {appt['appointment_date']} at {appt['appointment_time']} (Reason: {appt['reason']})\n"
         else:
             appt_list_text = "None."
@@ -459,53 +507,66 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
     Student Name: {current_user['full_name']}
     Current Date: {datetime.now().strftime("%Y-%m-%d")}
 
-    CONTEXT (Use this to help the student cancel or reschedule):
+    EXISTING APPOINTMENTS:
     {appt_list_text}
     """
 
     try:
         # step 3: build history
+        # [OPTIMIZATION] Only take the last 6 messages to prevent 504 Timeouts
         history_for_google = [
             {"role": "user", "parts": [final_instruction]},
-            {"role": "model", "parts": ["Understood. I am ready to help with booking, canceling, and advice. 😊"]}
+            {"role": "model", "parts": ["Understood. I'm Nurse Joy! How can I help? 😊"]}
         ]
 
-        if chat.history:
-            recent_msgs = chat.history[-10:] 
-            for msg in recent_msgs:
-                role = "user" if msg.get("role") == "user" else "model"
-                history_for_google.append({
-                    "role": role,
-                    "parts": [msg.get("message", "")]
-                })
+        # Only use recent history to save tokens
+        recent_msgs = chat.history[-6:] 
+        for msg in recent_msgs:
+            role = "user" if msg.get("role") == "user" else "model"
+            history_for_google.append({
+                "role": role,
+                "parts": [msg.get("message", "")]
+            })
 
-        # step 4: generate response
-        chat_session = model.start_chat(history=history_for_google)
-        response = chat_session.send_message(chat.message)
-        ai_text = response.text
+        # step 4: generate response with RETRY LOGIC
+        ai_text = "Sorry, I am busy."
+        
+        for attempt in range(3):
+            try:
+                chat_session = model.start_chat(history=history_for_google)
+                response = chat_session.send_message(chat.message)
+                ai_text = response.text
+                break 
+            except Exception as e:
+                if "503" in str(e) or "504" in str(e) or "Timeout" in str(e):
+                    print(f"Model overloaded (Attempt {attempt+1}/3). Retrying...")
+                    time.sleep(1) 
+                    continue
+                else:
+                    raise e 
 
         # step 5: check for json actions
         if "{" in ai_text and "}" in ai_text:
             try:
+                # find the json part
                 start = ai_text.find('{')
                 end = ai_text.rfind('}') + 1
-                data = json.loads(ai_text[start:end])
+                json_str = ai_text[start:end]
+                data = json.loads(json_str)
 
                 # --- ACTION A: BOOKING ---
                 if data.get("action") == "book_appointment":
                     conn = get_db()
-                    cursor = conn.cursor(buffered=True)
+                    # [FIX] Buffered here too
+                    cursor = conn.cursor(dictionary=True, buffered=True)
                     
-                    # duplicate check
-                    cursor.execute("""
-                        SELECT id FROM appointments 
-                        WHERE appointment_date = %s AND appointment_time = %s AND status != 'canceled'
-                    """, (data['date'], data['time']))
+                    # Call Validation
+                    error_message = validate_booking_rules(cursor, data['date'], data['time'])
                     
-                    if cursor.fetchone():
+                    if error_message:
                         cursor.close()
                         conn.close()
-                        return {"response": f"⚠️ That time ({data['time']}) is already taken! Please choose another time.", "requires_action": False}
+                        return {"response": error_message, "requires_action": False}
 
                     # insert
                     cursor.execute("""
@@ -517,10 +578,9 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                     cursor.close()
                     conn.close()
                     
-                    # success message + advice if available
-                    success_msg = f"Booked for {data['date']} at {data['time']}! ✅"
+                    success_msg = f"Booked for {data['date']} at {data['time']}!"
                     if data.get("ai_advice"):
-                        success_msg += f"\n\n💡 Health Tip: {data['ai_advice']}"
+                        success_msg += f"\n\n🩺 Nurse Joy says: {data['ai_advice']}"
                         
                     return {"response": success_msg, "requires_action": False}
 
@@ -529,17 +589,16 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                     appt_id = data.get("appointment_id")
                     
                     conn = get_db()
-                    cursor = conn.cursor()
+                    cursor = conn.cursor(buffered=True)
                     
-                    # verify
                     cursor.execute("SELECT id FROM appointments WHERE id = %s AND student_id = %s", (appt_id, current_user['user_id']))
                     
                     if cursor.fetchone():
                         cursor.execute("UPDATE appointments SET status = 'canceled' WHERE id = %s", (appt_id,))
                         conn.commit()
-                        msg = f"Okay, appointment #{appt_id} has been canceled. 🗑️"
+                        msg = f"Appointment #{appt_id} canceled. Take care!"
                     else:
-                        msg = f"I couldn't find Appointment #{appt_id}. Please check the list."
+                        msg = f"I couldn't find Appointment #{appt_id}. Please check your list."
                         
                     cursor.close()
                     conn.close()
@@ -547,7 +606,7 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
 
             except Exception as e:
                 print(f"json processing error: {e}")
-                return {"response": "System error processing your request. Please try again.", "requires_action": False}
+                pass
 
         # normal reply
         return {"response": ai_text, "requires_action": False}
@@ -555,7 +614,7 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
     except Exception as e:
         error_msg = str(e)
         print(f"ai error: {error_msg}")
-        return {"response": "My AI brain is a bit busy. Please try again in 10 seconds.", "requires_action": False}
+        return {"response": "I'm having a little trouble connecting to the system. Please try again in a moment!", "requires_action": False}
 
 if __name__ == "__main__":
     import uvicorn

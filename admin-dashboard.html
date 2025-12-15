@@ -32,8 +32,12 @@
     <div class="container">
         <main class="dashboard">
             <div class="dashboard-tabs">
-                <button class="tab-btn active" onclick="showTab('appointments')">
-                    <i class="fas fa-calendar-check"></i> Appointments
+                <button class="tab-btn active" onclick="showTab('queue')">
+                    <i class="fas fa-stopwatch"></i> Live Queue
+                </button>
+
+                <button class="tab-btn" onclick="showTab('appointments')">
+                    <i class="fas fa-calendar-check"></i> All Appointments
                 </button>
                 <button id="manage-users-tab" class="tab-btn" onclick="showTab('users')">
                     <i class="fas fa-users-cog"></i> Manage Users
@@ -43,7 +47,19 @@
                 </button>
             </div>
 
-            <div id="appointments-tab" class="tab-content active">
+            <div id="queue-tab" class="tab-content active">
+                <div class="queue-container">
+                    <div style="display:flex; justify-content:flex-end; margin-bottom:10px;">
+                         <button onclick="loadQueue()" class="btn-refresh">
+                            <i class="fas fa-sync-alt"></i> Refresh Queue
+                        </button>
+                    </div>
+
+                    <div id="queue-display-area"></div>
+                </div>
+            </div>
+
+            <div id="appointments-tab" class="tab-content">
                 <div class="card">
                     <div class="section-header">
                         <h2>Appointment Requests</h2>
@@ -66,6 +82,7 @@
                                 <option value="rejected">Rejected</option>
                                 <option value="canceled">Canceled</option>
                                 <option value="completed">Completed</option>
+                                <option value="noshow">No Show</option>
                             </select>
                             
                             <button onclick="loadAppointments()" class="btn-refresh" title="Refresh List">

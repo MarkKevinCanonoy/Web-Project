@@ -13,9 +13,40 @@
 </head>
 <body style="background: url('images/bg.png') no-repeat center center fixed; background-size: cover;">
 
+    <div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
+
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h3>Menu</h3>
+            <button onclick="toggleSidebar()" style="background:none; border:none; font-size:1.2rem; cursor:pointer;">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        
+        <button class="sidebar-btn active" onclick="showTab('booking'); toggleSidebar()">
+            <i class="fas fa-calendar-plus"></i> Book Appointment
+        </button>
+        <button class="sidebar-btn" onclick="showTab('chatbot'); toggleSidebar()">
+            <i class="fas fa-robot"></i> AI Assistant
+        </button>
+        <button class="sidebar-btn" onclick="showTab('appointments'); toggleSidebar()">
+            <i class="fas fa-list"></i> My Appointments
+        </button>
+        
+        <div style="margin-top: auto; border-top: 1px solid #eee; padding-top: 10px;">
+            <button onclick="logout()" class="sidebar-btn" style="color: var(--danger);">
+                <i class="fas fa-sign-out-alt"></i> Logout
+            </button>
+        </div>
+    </div>
+
     <header class="top-bar">
         <div class="header-content">
             <div class="brand">
+                <button class="menu-btn" onclick="toggleSidebar()">
+                    <i class="fas fa-bars"></i>
+                </button>
+
                 <img src="images/logo.jpg" alt="Logo" style="height: 40px; border-radius: 50%; margin-right: 10px;">
                 <h1>Student Dashboard</h1>
             </div>
@@ -140,26 +171,31 @@
         </main>
     </div>
 
-    <div id="ticket-template" style="position: fixed; left: -9999px; width: 400px; padding: 20px; font-family: 'Segoe UI', sans-serif; border: 2px solid #333; background: white; border-radius: 10px;">
-        <div style="text-align: center; border-bottom: 2px solid #1E88E5; padding-bottom: 10px; margin-bottom: 20px;">
-            <h2 style="margin: 0; color: #1E88E5; font-size: 1.5rem;">CLINIC PASS</h2>
-            <p style="margin: 5px 0; font-size: 0.9rem; color: #666;">Official Entry Ticket</p>
+    <div id="ticket-template" style="position: fixed; left: -9999px; width: 500px; padding: 30px; font-family: 'Segoe UI', sans-serif; border: 3px solid #333; background: white; border-radius: 15px;">
+        
+        <div style="display: flex; align-items: center; border-bottom: 3px solid #1E88E5; padding-bottom: 20px; margin-bottom: 20px;">
+            <img src="images/logo.jpg" style="width: 100px; height: 100px; object-fit: cover; border-radius: 50%; margin-right: 20px; border: 2px solid #eee;">
+            
+            <div>
+                <h2 style="margin: 0; color: #1E88E5; font-size: 2.2rem; font-weight: 800; line-height: 1;">CLINIC PASS</h2>
+                <p style="margin: 5px 0 0 0; font-size: 1.1rem; color: #555; font-weight: 600;">Official Entry Ticket</p>
+            </div>
         </div>
         
-        <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-            <p style="margin: 5px 0;"><strong>Name:</strong> <span id="pdf-name">Student Name</span></p>
-            <p style="margin: 5px 0;"><strong>Service:</strong> <span id="pdf-service">Checkup</span></p>
-            <p style="margin: 5px 0;"><strong>Date:</strong> <span id="pdf-date">2025-10-20</span></p>
-            <p style="margin: 5px 0;"><strong>Time:</strong> <span id="pdf-time">10:00 AM</span></p>
+        <div style="background: #f4f7fb; padding: 20px; border-radius: 12px; margin-bottom: 25px; border: 1px solid #e0e0e0;">
+            <p style="margin: 8px 0; font-size: 1.1rem;"><strong>Name:</strong> <span id="pdf-name" style="color: #333;">Student Name</span></p>
+            <p style="margin: 8px 0; font-size: 1.1rem;"><strong>Service:</strong> <span id="pdf-service">Checkup</span></p>
+            <p style="margin: 8px 0; font-size: 1.1rem;"><strong>Date:</strong> <span id="pdf-date">2025-10-20</span></p>
+            <p style="margin: 8px 0; font-size: 1.1rem;"><strong>Time:</strong> <span id="pdf-time" style="color: #1E88E5; font-weight: bold;">10:00 AM</span></p>
         </div>
 
-        <div style="display: flex; justify-content: center; margin-bottom: 10px;">
-            <div id="pdf-qr-code" style="padding: 10px; background: white; border: 1px solid #ddd;"></div> 
+        <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 15px;">
+            <div id="pdf-qr-code" style="padding: 15px; background: white; border: 1px solid #ccc; border-radius: 10px;"></div> 
+            <p style="margin-top: 10px; font-size: 0.9rem; color: #888;">ID: <span id="pdf-id">#123</span></p>
         </div>
     
-        <div style="text-align: center; font-size: 0.8rem; color: #888;">
-            <p>Scan this at the admin desk.</p>
-            <p>ID: <span id="pdf-id">#123</span></p>
+        <div style="text-align: center; font-size: 0.8rem; color: #aaa; border-top: 1px solid #eee; padding-top: 10px;">
+            <p>Please present this ticket at the clinic reception.</p>
         </div>
     </div>
 
