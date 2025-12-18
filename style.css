@@ -258,13 +258,27 @@ body {
 }
 
 .appointment-card {
-    background: white; border-radius: var(--radius);
-    padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    background: white; 
+    border-radius: var(--radius);
+    padding: 20px; 
+    
+    /* [UPDATED] Stronger Shadow */
+    /* 0px X-offset, 8px Y-offset, 24px Blur, 0.12 Opacity */
+    box-shadow: 0 8px 24px rgba(0,0,0,0.20);
+    
     border-left: 5px solid var(--primary); 
-    transition: transform 0.2s;
-    display: flex; flex-direction: column; justify-content: space-between;
+    transition: transform 0.2s, box-shadow 0.2s; /* Added smooth transition for shadow too */
+    display: flex; 
+    flex-direction: column; 
+    justify-content: space-between;
 }
-.appointment-card:hover { transform: translateY(-3px); }
+
+.appointment-card:hover { 
+    transform: translateY(-10px); /* Moves up slightly more */
+    
+    /* [UPDATED] Even stronger shadow on hover */
+    box-shadow: 0 12px 30px rgba(0,0,0,0.30); 
+}
 
 /* [fix] prevent overflow in student cards */
 .apt-body {
@@ -734,3 +748,89 @@ body {
     color: #aaa;
 }
 .empty-queue i { font-size: 3rem; margin-bottom: 15px; }
+
+
+/* =========================================
+   12. SCANNER & FORM FIXES
+   ========================================= */
+
+/* Make Scanner Buttons look like the rest of the app */
+#reader button {
+    background-color: var(--primary);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 10px 5px;
+    transition: 0.2s;
+}
+
+#reader button:hover {
+    background-color: var(--primary-dark);
+}
+
+/* Style the "Scan an Image File" link */
+#reader a {
+    color: var(--primary);
+    text-decoration: none;
+    font-weight: bold;
+    font-size: 0.95rem;
+}
+
+#reader a:hover {
+    text-decoration: underline;
+}
+
+/* Fix for the Password Eye Icon */
+.input-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.input-wrapper input {
+    width: 100%;
+    padding-right: 40px; /* Make space for the icon */
+}
+
+.toggle-password {
+    position: absolute;
+    right: 15px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: pointer;
+    color: #666;
+    z-index: 10;
+}
+
+/* =========================================
+   13. SECTION TITLE FIX
+   ========================================= */
+.section-header h2 {
+    color: var(--primary);      /* Changes text from black to Blue (#1E88E5) */
+    font-size: 1.5rem;          /* Makes it slightly larger */
+    font-weight: 700;           /* Makes it bold */
+    margin: 0;
+    
+    /* Optional: Adds a cool blue line on the left 
+    border-left: 5px solid var(--primary); 
+    padding-left: 15px;         /* Space between line and text 
+    line-height: 1.2;
+    */
+}
+
+/* =========================================
+   14. FIX TEXTAREA STRETCHING
+   ========================================= */
+textarea {
+    /* Allows resizing only up/down, not sideways */
+    resize: vertical; 
+    
+    /* Ensures it never goes wider than its container */
+    max-width: 100%;
+    
+    /* Optional: Sets a minimum height so it doesn't get too small */
+    min-height: 80px; 
+}

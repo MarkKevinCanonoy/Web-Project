@@ -8,6 +8,17 @@ const token = localStorage.getItem('token');
 const role = localStorage.getItem('role');
 const fullName = localStorage.getItem('full_name') || 'Admin';
 
+// [NEW] Get Current User ID from Token to prevent self-delete
+let currentUserId = null;
+if (token) {
+    try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        currentUserId = payload.user_id;
+    } catch (e) {
+        console.error("Error parsing token", e);
+    }
+}
+
 if (!token || (role !== 'admin' && role !== 'super_admin')) {
     Swal.fire({
         icon: 'error',
@@ -24,9 +35,8 @@ document.getElementById('user-name').textContent = fullName;
 document.getElementById('user-role').textContent = role === 'super_admin' ? 'Super Admin' : 'Admin';
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Default to queue tab on load
     loadQueue();
-    loadAppointments(); // load all data in background
+    loadAppointments(); 
     if(role === 'super_admin') {
         loadUsers();
     } else {
@@ -69,8 +79,22 @@ function logout() {
     });
 }
 
+// [NEW] Password Toggle Function
+function togglePasswordVisibility(inputId, icon) {
+    const input = document.getElementById(inputId);
+    if (input.type === "password") {
+        input.type = "text";
+        icon.classList.remove('fa-eye');
+        icon.classList.add('fa-eye-slash');
+    } else {
+        input.type = "password";
+        icon.classList.remove('fa-eye-slash');
+        icon.classList.add('fa-eye');
+    }
+}
+
 // ==========================================
-//  QUEUE LOGIC (UPDATED WITH REASON)
+//  QUEUE LOGIC 
 // ==========================================
 
 async function loadQueue() {
@@ -78,16 +102,13 @@ async function loadQueue() {
     container.innerHTML = '<p style="text-align:center;">Loading queue...</p>';
 
     try {
-        // Fetch fresh data
         const response = await fetch(`${API_URL}/appointments`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         const data = await response.json();
 
-        // 1. Filter: Only APPROVED appointments
         let queue = data.filter(a => a.status === 'approved');
 
-        // 2. Sort: Date then Time (Oldest/Closest first)
         queue.sort((a, b) => {
             const dateA = new Date(a.appointment_date + 'T' + a.appointment_time);
             const dateB = new Date(b.appointment_date + 'T' + b.appointment_time);
@@ -116,9 +137,8 @@ function renderQueue(queue) {
         return;
     }
 
-    // Isolate the first person (Next in line)
     const nextPatient = queue[0];
-    const waitingList = queue.slice(1); // everyone else
+    const waitingList = queue.slice(1); 
 
     const niceTime = formatTime(nextPatient.appointment_time);
     const niceDate = formatDate(nextPatient.appointment_date);
@@ -147,10 +167,8 @@ function renderQueue(queue) {
         </div>
     `;
 
-    // WAIT LIST
     if (waitingList.length > 0) {
         html += `<div class="queue-list-header">Up Next (${waitingList.length})</div>`;
-        
         waitingList.forEach(apt => {
             html += `
                 <div class="queue-item">
@@ -170,7 +188,6 @@ function renderQueue(queue) {
     container.innerHTML = html;
 }
 
-// Logic for "No Show" button
 function handleNoShow(id) {
     Swal.fire({
         title: 'Mark as No Show?',
@@ -182,7 +199,7 @@ function handleNoShow(id) {
     }).then(async (result) => {
         if (result.isConfirmed) {
             await updateStatus(id, 'noshow', 'Student did not appear for appointment.');
-            loadQueue(); // refresh UI
+            loadQueue(); 
         }
     });
 }
@@ -197,7 +214,7 @@ function handleCompleteQueue(id) {
     }).then(async (result) => {
         if (result.isConfirmed) {
             await updateStatus(id, 'completed', 'Completed via Queue Dashboard');
-            loadQueue(); // refresh UI
+            loadQueue();
         }
     });
 }
@@ -209,12 +226,8 @@ async function updateStatus(id, status, note) {
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
             body: JSON.stringify({ status: status, admin_note: note })
         });
-        
-        const Toast = Swal.mixin({
-            toast: true, position: 'top-end', showConfirmButton: false, timer: 2000
-        });
+        const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2000 });
         Toast.fire({ icon: 'success', title: 'Status updated' });
-
     } catch (e) { console.error(e); }
 }
 
@@ -425,6 +438,7 @@ async function updateAppointmentStatus(status) {
     loadAppointments(); loadQueue();
 }
 
+// [UPDATED] Load Users with Self-Delete Protection
 async function loadUsers() {
     try {
         const response = await fetch(`${API_URL}/users`, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -432,13 +446,32 @@ async function loadUsers() {
         const filter = document.getElementById('user-role-filter') ? document.getElementById('user-role-filter').value : 'all';
         if (filter === 'student') users = users.filter(u => u.role === 'student');
         else if (filter === 'admin') users = users.filter(u => u.role === 'admin' || u.role === 'super_admin');
+        
         const tbody = document.getElementById('users-list');
         tbody.innerHTML = '';
+        
         if (users.length === 0) { tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No users found.</td></tr>`; return; }
+        
         users.forEach(u => {
             let roleLabel = u.role === 'student' ? 'Student' : (u.role === 'super_admin' ? 'Super Admin' : 'Admin');
             let roleColor = u.role === 'student' ? 'green' : 'blue';
-            tbody.insertAdjacentHTML('beforeend', `<tr><td>${u.full_name}</td><td>${u.email}</td><td><span style="color:${roleColor};font-weight:bold;">${roleLabel}</span></td><td>${new Date(u.created_at).toLocaleDateString()}</td><td><button onclick="deleteUser(${u.id})" class="btn-delete"><i class="fas fa-trash"></i></button></td></tr>`);
+            
+            // CHECK: If this row is YOU, don't show the delete button
+            let deleteBtn = `<button onclick="deleteUser(${u.id})" class="btn-delete"><i class="fas fa-trash"></i></button>`;
+            
+            if (u.id === currentUserId) {
+                deleteBtn = `<span style="color:#aaa; font-size:0.8rem;">(You)</span>`;
+            }
+
+            tbody.insertAdjacentHTML('beforeend', `
+                <tr>
+                    <td>${u.full_name}</td>
+                    <td>${u.email}</td>
+                    <td><span style="color:${roleColor};font-weight:bold;">${roleLabel}</span></td>
+                    <td>${new Date(u.created_at).toLocaleDateString()}</td>
+                    <td>${deleteBtn}</td>
+                </tr>
+            `);
         });
     } catch (e) { console.error(e); }
 }

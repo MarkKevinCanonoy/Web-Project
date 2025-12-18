@@ -149,23 +149,25 @@
             </div>
 
             <div id="appointments-tab" class="tab-content">
-                <div class="section-header">
-                    <h2>My Appointments</h2>
-                    <div style="display:flex; gap:10px; align-items:center;">
-                        <select id="status-filter" onchange="filterAppointments()" style="padding: 8px; border-radius:6px; border:1px solid #ddd;">
-                            <option value="all">All Status</option>
-                            <option value="pending">Pending</option>
-                            <option value="approved">Approved</option>
-                            <option value="rejected">Rejected</option>
-                            <option value="canceled">Canceled</option>
-                            <option value="completed">Completed</option>
-                        </select>
-                        <button onclick="loadAppointments()" class="btn-refresh">
-                            <i class="fas fa-sync-alt"></i> Refresh
-                        </button>
+                <div class="card"> 
+                    <div class="section-header">
+                        <h2>My Appointments</h2>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <select id="status-filter" onchange="filterAppointments()" style="padding: 8px; border-radius:6px; border:1px solid #ddd;">
+                                <option value="all">All Status</option>
+                                <option value="pending">Pending</option>
+                                <option value="approved">Approved</option>
+                                <option value="rejected">Rejected</option>
+                                <option value="canceled">Canceled</option>
+                                <option value="completed">Completed</option>
+                            </select>
+                            <button onclick="loadAppointments()" class="btn-refresh">
+                                <i class="fas fa-sync-alt"></i> Refresh
+                            </button>
+                        </div>
                     </div>
+                    <div id="appointments-list" class="appointments-grid"></div>
                 </div>
-                <div id="appointments-list" class="appointments-grid"></div>
             </div>
 
         </main>

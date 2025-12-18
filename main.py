@@ -11,6 +11,7 @@ import jwt
 import os
 import json
 import time 
+import re
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -44,12 +45,26 @@ DB_CONFIG = {
 BASE_INSTRUCTION = """
 SYSTEM: You are the School Clinic Receptionist (Nurse Joy).
 PERSONA: Warm, caring, efficient, and professional.
-GOAL: Book appointments or give basic home-remedy advice.
+GOAL: Book appointments, but ONLY when you have ALL necessary details.
 
 RULES:
 1. **Be Human:** Use natural language. Say "Oh no, I hope you feel better!" if they are sick.
-2. **One-Liner:** If user says "Book checkup tomorrow 2pm", output JSON immediately.
-3. **Time:** Convert "2pm" -> "14:00:00".
+
+2. **MANDATORY CHECKLIST:** Before generating the booking JSON, you MUST verify you have ALL 5 items:
+   - [ ] Date (e.g., tomorrow, next monday)
+   - [ ] Time (e.g., 2pm)
+   - [ ] Service Type (Medical Consultation OR Medical Clearance)
+   - [ ] Urgency (Normal OR Urgent)
+   - [ ] Reason (e.g., headache, fever, enrollment)
+
+   > IF ANY OF THE ABOVE ARE MISSING, DO NOT BOOK.
+   > Instead, ask the user specifically for the missing info. 
+   > Example: "I can help, but is this Urgent or Normal?" or "What is the reason for the visit?"
+
+3. **One-Liner Exception:** ONLY output JSON immediately if the user provided EVERYTHING in one sentence. 
+   (e.g., "Book consultation tomorrow 2pm urgent for fever" -> OK to book).
+   (e.g., "Book appointment tomorrow" -> MISSING INFO -> Ask for Time, Reason, etc).
+
 4. **Context:** Check "EXISTING APPOINTMENTS" below. If they say "Cancel it", use the ID from there.
 
 🔴 CRITICAL: FOR ACTIONS, OUTPUT RAW JSON ONLY. NO MARKDOWN.
@@ -86,6 +101,41 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+
+# [NEW] SMART DATE PARSER HELPER (FIXED)
+# Accurately calculates "Next [Day]" logic
+def parse_relative_date(date_str):
+    today = datetime.now()
+    date_str = date_str.lower().strip()
+
+    if date_str == "today":
+        return today.strftime("%Y-%m-%d")
+    
+    if date_str == "tomorrow":
+        return (today + timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    # Check for specific weekdays
+    weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+    
+    for i, day in enumerate(weekdays):
+        if day in date_str:
+            # Calculate days ahead to reach the target weekday
+            # If today is Thu(3) and target is Tue(1): (1 - 3 + 7) % 7 = 5 days ahead
+            days_ahead = (i - today.weekday() + 7) % 7
+            
+            # If days_ahead is 0, it means it's today. 
+            # Usually "Next [Day]" implies next week if it's today, so we add 7.
+            if days_ahead == 0: 
+                days_ahead = 7
+            
+            # [FIX] We removed the "+7 if next is present" logic because it caused overshooting.
+            # The calculation above (x + 7) % 7 naturally finds the *immediate next* occurrence.
+            
+            target_date = today + timedelta(days=days_ahead)
+            return target_date.strftime("%Y-%m-%d")
+
+    # If it's already a valid date format (YYYY-MM-DD) or AI provided specific date, leave it
+    return date_str
 
 # jwt configuration
 ALGORITHM = "HS256"
@@ -136,15 +186,24 @@ def create_default_users():
         cursor.close()
         conn.close()
 
-# --- [FIXED] VALIDATION FUNCTION ---
-# Used by both Manual Booking and AI.
+# --- VALIDATION FUNCTION ---
 def validate_booking_rules(cursor, date_str, time_str):
     """
     Returns None if valid.
     Returns error message string if invalid.
     """
     
-    # 1. Parse Time
+    # 1. Parse Date (Basic Check)
+    try:
+        booking_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        if booking_date < datetime.now().date():
+            return "You cannot book appointments in the past."
+        if booking_date.weekday() == 6: # 6 = Sunday
+            return "The clinic is closed on Sundays."
+    except ValueError:
+        return "Invalid date format. Please use YYYY-MM-DD."
+
+    # 2. Parse Time
     try:
         if len(time_str) == 5:
             time_str += ":00"
@@ -152,22 +211,17 @@ def validate_booking_rules(cursor, date_str, time_str):
     except ValueError:
         return "Invalid time format."
 
-    # 2. Clinic Hours Logic
-    # 12:00 PM is Lunch (Closed)
+    # 3. Clinic Hours Logic
     if booking_time.hour == 12:
         return "Clinic is closed for lunch from 12:00 PM to 1:00 PM."
     
-    # 7:00 PM (19:00) onwards is Closed
     if booking_time.hour >= 19:
         return "Clinic is closed. Operations end at 7:00 PM."
 
-    # Optional: Start Time (e.g., 8:00 AM)
     if booking_time.hour < 8:
         return "Clinic opens at 8:00 AM."
 
-    # 3. The 1-Hour Gap Logic (SQL)
-    # We check if the requested time matches any existing appointment within +/- 59 minutes.
-    # We only check 'pending' or 'approved' statuses.
+    # 4. The 1-Hour Gap Logic (SQL)
     cursor.execute("""
         SELECT id, appointment_time FROM appointments 
         WHERE appointment_date = %s 
@@ -335,33 +389,32 @@ def get_appointments(current_user = Depends(get_current_user)):
 
 @app.post("/api/appointments")
 def create_appointment(appointment: AppointmentCreate, current_user = Depends(get_current_user)):
-    # 1. check if user is a student
     if current_user['role'] != 'student':
         raise HTTPException(status_code=403, detail="only students can book appointments")
     
     conn = get_db()
-    # [FIX] Added buffered=True to prevent "Unread result found" error
     cursor = conn.cursor(dictionary=True, buffered=True) 
     try:
+        # Pre-validate relative dates logic is handled in frontend for manual, 
+        # but here we just ensure basic validation.
+        
         # 2. Call Validation
         error_message = validate_booking_rules(cursor, appointment.appointment_date, appointment.appointment_time)
         
         if error_message:
-            # We don't need to close cursor here because 'finally' block handles it
             raise HTTPException(status_code=400, detail=error_message)
 
         # 3. insert
         cursor.execute("""
             INSERT INTO appointments (student_id, appointment_date, appointment_time, service_type, urgency, reason, booking_mode, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
+            VALUES (%s, %s, %s, %s, %s, %s, 'standard', 'pending')
         """, (
             current_user['user_id'], 
             appointment.appointment_date, 
             appointment.appointment_time, 
             appointment.service_type, 
             appointment.urgency, 
-            appointment.reason, 
-            appointment.booking_mode
+            appointment.reason
         ))
         conn.commit()
         return {"message": "appointment booked successfully", "id": cursor.lastrowid}
@@ -505,7 +558,7 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
     {BASE_INSTRUCTION}
     
     Student Name: {current_user['full_name']}
-    Current Date: {datetime.now().strftime("%Y-%m-%d")}
+    Current Date: {datetime.now().strftime("%Y-%m-%d, %A")}
 
     EXISTING APPOINTMENTS:
     {appt_list_text}
@@ -516,10 +569,9 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
         # [OPTIMIZATION] Only take the last 6 messages to prevent 504 Timeouts
         history_for_google = [
             {"role": "user", "parts": [final_instruction]},
-            {"role": "model", "parts": ["Understood. I'm Nurse Joy! How can I help? 😊"]}
+            {"role": "model", "parts": ["Understood. I'm Nurse Joy! I will ask for missing info before booking. 😊"]}
         ]
 
-        # Only use recent history to save tokens
         recent_msgs = chat.history[-6:] 
         for msg in recent_msgs:
             role = "user" if msg.get("role") == "user" else "model"
@@ -548,7 +600,6 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
         # step 5: check for json actions
         if "{" in ai_text and "}" in ai_text:
             try:
-                # find the json part
                 start = ai_text.find('{')
                 end = ai_text.rfind('}') + 1
                 json_str = ai_text[start:end]
@@ -557,11 +608,13 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                 # --- ACTION A: BOOKING ---
                 if data.get("action") == "book_appointment":
                     conn = get_db()
-                    # [FIX] Buffered here too
                     cursor = conn.cursor(dictionary=True, buffered=True)
                     
-                    # Call Validation
-                    error_message = validate_booking_rules(cursor, data['date'], data['time'])
+                    # [NEW] Parse Relative Date (e.g. "next monday")
+                    parsed_date = parse_relative_date(data['date'])
+                    
+                    # Call Validation with Parsed Date
+                    error_message = validate_booking_rules(cursor, parsed_date, data['time'])
                     
                     if error_message:
                         cursor.close()
@@ -572,13 +625,13 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                     cursor.execute("""
                         INSERT INTO appointments (student_id, appointment_date, appointment_time, service_type, urgency, reason, booking_mode, status)
                         VALUES (%s, %s, %s, %s, %s, %s, 'ai_chatbot', 'pending')
-                    """, (current_user['user_id'], data['date'], data['time'], data['service_type'], data['urgency'], data['reason']))
+                    """, (current_user['user_id'], parsed_date, data['time'], data['service_type'], data['urgency'], data['reason']))
                     
                     conn.commit()
                     cursor.close()
                     conn.close()
                     
-                    success_msg = f"Booked for {data['date']} at {data['time']}!"
+                    success_msg = f"✅ Booked for {parsed_date} at {data['time']}!"
                     if data.get("ai_advice"):
                         success_msg += f"\n\n🩺 Nurse Joy says: {data['ai_advice']}"
                         
@@ -596,7 +649,7 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                     if cursor.fetchone():
                         cursor.execute("UPDATE appointments SET status = 'canceled' WHERE id = %s", (appt_id,))
                         conn.commit()
-                        msg = f"Appointment #{appt_id} canceled. Take care!"
+                        msg = f"Appointment #{appt_id} canceled. Take care! 👋"
                     else:
                         msg = f"I couldn't find Appointment #{appt_id}. Please check your list."
                         
@@ -614,7 +667,7 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
     except Exception as e:
         error_msg = str(e)
         print(f"ai error: {error_msg}")
-        return {"response": "I'm having a little trouble connecting to the system. Please try again in a moment!", "requires_action": False}
+        return {"response": "I'm having a little trouble connecting to the system. Please try again in a moment! 😓", "requires_action": False}
 
 if __name__ == "__main__":
     import uvicorn
