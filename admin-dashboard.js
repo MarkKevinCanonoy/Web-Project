@@ -97,9 +97,14 @@ function togglePasswordVisibility(inputId, icon) {
 //  QUEUE LOGIC 
 // ==========================================
 
+
+
+
+
+// [UPDATED] Silent Queue Load
 async function loadQueue() {
     const container = document.getElementById('queue-display-area');
-    container.innerHTML = '<p style="text-align:center;">Loading queue...</p>';
+    // Removed "Loading..." text to prevent blinking
 
     try {
         const response = await fetch(`${API_URL}/appointments`, {
@@ -119,7 +124,6 @@ async function loadQueue() {
 
     } catch (e) {
         console.error(e);
-        container.innerHTML = '<p style="color:red; text-align:center;">Error loading queue.</p>';
     }
 }
 
@@ -206,15 +210,27 @@ function handleNoShow(id) {
 
 function handleCompleteQueue(id) {
     Swal.fire({
-        title: 'Complete Visit?',
-        icon: 'success',
+        title: 'Complete Visit',
+        input: 'textarea',
+        inputLabel: 'Nurse Notes / Diagnosis',
+        inputPlaceholder: 'e.g., Given Paracetamol, advised rest, temperature 37.5C...',
+        inputAttributes: {
+            'aria-label': 'Type your notes here'
+        },
         showCancelButton: true,
         confirmButtonColor: '#2ecc71',
-        confirmButtonText: 'Yes, Completed'
+        confirmButtonText: 'Complete Visit',
+        cancelButtonText: 'Cancel'
     }).then(async (result) => {
         if (result.isConfirmed) {
-            await updateStatus(id, 'completed', 'Completed via Queue Dashboard');
-            loadQueue();
+            // Use the text they typed, or a default message if empty
+            const note = result.value || 'Medical consultation completed.';
+            
+            await updateStatus(id, 'completed', note);
+            
+            // Reload to update UI
+            loadQueue(); 
+            loadAppointments();
         }
     });
 }
@@ -249,37 +265,68 @@ function stopScanner() {
 }
 
 async function onScanSuccess(decodedText, decodedResult) {
-    stopScanner();
+    stopScanner(); // Stop camera immediately so it doesn't scan twice
     const appointmentId = decodedText;
-    document.getElementById('scan-result').innerHTML = `Processing ID: ${appointmentId}...`;
+    
+    document.getElementById('scan-result').innerHTML = `Scanned ID: ${appointmentId}. Waiting for remarks...`;
 
-    try {
-        const response = await fetch(`${API_URL}/appointments/${appointmentId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-            body: JSON.stringify({ status: 'completed', admin_note: 'Verified via QR Scan' })
-        });
-        const data = await response.json();
+    // 1. Ask for Nurse Notes
+    const { value: note, isConfirmed } = await Swal.fire({
+        title: 'Ticket Scanned!',
+        html: `Processing Appointment <strong>#${appointmentId}</strong>.<br>Enter diagnosis or remarks:`,
+        input: 'textarea',
+        inputPlaceholder: 'e.g. Temperature 36.5, given paracetamol...',
+        inputAttributes: { 'aria-label': 'Type your notes here' },
+        showCancelButton: true,
+        confirmButtonColor: '#2ecc71',
+        confirmButtonText: 'Complete Visit',
+        cancelButtonText: 'Cancel'
+    });
 
-        if (response.ok) {
-            Swal.fire({
-                icon: 'success', title: 'Verified!', text: `Student cleared. (ID: ${appointmentId})`,
-                timer: 2500, showConfirmButton: false
-            }).then(() => {
-                document.getElementById('scan-result').innerHTML = "Ready for next student.";
-                startScanner();
+    // 2. If user clicked "Complete Visit"
+    if (isConfirmed) {
+        const finalNote = note || 'Verified via QR Scan'; // Default text if empty
+        document.getElementById('scan-result').innerHTML = `Saving ID: ${appointmentId}...`;
+
+        try {
+            const response = await fetch(`${API_URL}/appointments/${appointmentId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ status: 'completed', admin_note: finalNote })
             });
-        } else if (data.detail === "already_scanned") {
-            Swal.fire({ icon: 'warning', title: 'ALREADY USED', confirmButtonColor: '#f39c12' })
-            .then(() => startScanner());
-        } else {
-            Swal.fire('Error', data.detail || 'Server Error', 'error');
-            setTimeout(startScanner, 2000); 
+            const data = await response.json();
+
+            if (response.ok) {
+                Swal.fire({
+                    icon: 'success', 
+                    title: 'Visit Completed', 
+                    text: `Student cleared with remarks.`,
+                    timer: 2000, 
+                    showConfirmButton: false
+                }).then(() => {
+                    document.getElementById('scan-result').innerHTML = "Ready for next student.";
+                    startScanner(); // Restart camera for next person
+                });
+            } else if (data.detail === "already_scanned") {
+                Swal.fire({ 
+                    icon: 'warning', 
+                    title: 'ALREADY USED', 
+                    text: 'This ticket was already completed.',
+                    confirmButtonColor: '#f39c12' 
+                }).then(() => startScanner());
+            } else {
+                Swal.fire('Error', data.detail || 'Server Error', 'error');
+                setTimeout(startScanner, 2000); 
+            }
+        } catch (e) {
+            console.error(e);
+            Swal.fire('Error', 'Connection Error', 'error');
+            setTimeout(startScanner, 2000);
         }
-    } catch (e) {
-        console.error(e);
-        Swal.fire('Error', 'Connection Error', 'error');
-        setTimeout(startScanner, 2000);
+    } else {
+        // 3. If user clicked "Cancel"
+        document.getElementById('scan-result').innerHTML = "Scan cancelled. Ready.";
+        startScanner(); // Restart camera immediately
     }
 }
 
@@ -494,3 +541,9 @@ async function handleNewUser(e) {
     if(res.ok) { Swal.fire('Success', 'User created.', 'success'); closeModal('add-user-modal'); loadUsers(); } 
     else Swal.fire('Error', 'Failed.', 'error');
 }
+
+// Auto-refresh both Queue and Table every 2 seconds
+setInterval(() => {
+    loadQueue();
+    loadAppointments(); // This function was already "silent" in your code, so it's fine
+}, 2000);

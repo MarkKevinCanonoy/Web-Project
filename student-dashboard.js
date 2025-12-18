@@ -70,7 +70,8 @@ async function handleBooking(e) {
     // getting values
     const serviceType = document.getElementById('book-type').value;
     const date = document.getElementById('book-date').value;
-    const timeRaw = document.getElementById('book-time').value;
+    // const timeRaw = document.getElementById('book-time').value;
+    const timeRaw = document.getElementById('selected-time').value;
     const urgency = document.getElementById('book-urgency').value;
     const reason = document.getElementById('book-reason').value;
 
@@ -123,9 +124,10 @@ async function handleBooking(e) {
 }
 
 // load appointments
+// [UPDATED] Silent Load (No flashing "Loading..." text)
 async function loadAppointments() {
+    // We REMOVED the line that says "Loading..." so it doesn't blink
     const container = document.getElementById('appointments-list');
-    container.innerHTML = '<p>Loading...</p>';
 
     try {
         const response = await fetch(`${API_URL}/appointments`, {
@@ -139,7 +141,10 @@ async function loadAppointments() {
         
     } catch (error) {
         console.error('Error loading appointments:', error);
-        container.innerHTML = '<p>Error loading appointments</p>';
+        // Only show error if the container is empty, otherwise keep old data
+        if(container.children.length === 0) {
+            container.innerHTML = '<p>Error loading appointments</p>';
+        }
     }
 }
 
@@ -160,7 +165,9 @@ function displayAppointments(appointments) {
         let statusLabel = apt.status.charAt(0).toUpperCase() + apt.status.slice(1);
         if(apt.status === 'noshow') statusLabel = 'No Show';
 
-        let adminNoteHtml = '';
+let adminNoteHtml = '';
+        
+        // 1. Rejected Note
         if (apt.status === 'rejected' && apt.admin_note) {
             adminNoteHtml = `
                 <div class="admin-note-box">
@@ -169,11 +176,23 @@ function displayAppointments(appointments) {
                     ${apt.admin_note}
                 </div>
             `;
-        } else if (apt.status === 'noshow' && apt.admin_note) {
+        } 
+        // 2. No Show Note
+        else if (apt.status === 'noshow' && apt.admin_note) {
              adminNoteHtml = `
                 <div class="admin-note-box" style="background-color:#eceff1; border-color:#cfd8dc; color:#455a64;">
-                    <i class="fas fa-info-circle"></i> 
-                    <strong>Note:</strong> ${apt.admin_note}
+                    <i class="fas fa-user-clock"></i> 
+                    <strong>Status:</strong> ${apt.admin_note}
+                </div>
+            `;
+        }
+        // [NEW] 3. Completed / Diagnosis Note
+        else if (apt.status === 'completed' && apt.admin_note) {
+             adminNoteHtml = `
+                <div class="admin-note-box" style="background-color:#e8f5e9; border-color:#a5d6a7; color:#2e7d32;">
+                    <i class="fas fa-user-md"></i> 
+                    <strong>Diagnosis / Remarks:</strong><br> 
+                    ${apt.admin_note}
                 </div>
             `;
         }
@@ -184,18 +203,22 @@ function displayAppointments(appointments) {
 
         let actionButtonsHtml = '';
         
-        if (apt.status === 'pending') {
-            actionButtonsHtml = `<button onclick="cancelAppointment(${apt.id})" class="btn-cancel">Cancel Request</button>`;
-        } 
-        else if (apt.status === 'approved') {
-            actionButtonsHtml = `
-                <div style="display:flex; flex-direction:column; gap:5px; width:100%;">
-                    <button onclick='generateTicket(${JSON.stringify(apt)})' class="btn-primary" style="background-color:#2ecc71;">
-                        <i class="fas fa-download"></i> Download Ticket
-                    </button>
-                    <button onclick="deleteHistory(${apt.id})" class="btn-cancel" style="background-color: #ffcdd2; color: #c62828;">Cancel Appointment</button>
-                </div>`;
-        } 
+if (apt.status === 'pending') {
+    actionButtonsHtml = `
+        <button onclick="openRescheduleModal(${apt.id})" class="btn-primary" style="background:#f39c12; margin-bottom:5px;">Reschedule</button>
+        <button onclick="cancelAppointment(${apt.id})" class="btn-cancel">Cancel Request</button>
+    `;
+} 
+else if (apt.status === 'approved') {
+    actionButtonsHtml = `
+        <div style="display:flex; flex-direction:column; gap:5px; width:100%;">
+            <button onclick='generateTicket(${JSON.stringify(apt)})' class="btn-primary" style="background-color:#2ecc71;">
+                <i class="fas fa-download"></i> Download Ticket
+            </button>
+            <button onclick="openRescheduleModal(${apt.id})" class="btn-primary" style="background:#f39c12;">Reschedule</button>
+            <button onclick="deleteHistory(${apt.id})" class="btn-cancel" style="background-color: #ffcdd2; color: #c62828;">Cancel Appointment</button>
+        </div>`;
+}
         else if (apt.status === 'completed') {
              actionButtonsHtml = `
                 <div style="display:flex; flex-direction:column; gap:5px; width:100%;">
@@ -382,10 +405,23 @@ function handleEnter(e) { if (e.key === 'Enter') sendChatMessage(); }
 
 function formatTime(timeStr) {
     if (!timeStr) return "";
-    const [hours, minutes] = timeStr.split(':');
-    let hour = parseInt(hours);
+
+    // [FIX] Check if it's already formatted (Has AM or PM)
+    // If yes, just return it as is. Do not format it again.
+    if (timeStr.includes('AM') || timeStr.includes('PM')) {
+        return timeStr;
+    }
+
+    // Otherwise, perform the standard 24h -> 12h conversion
+    // (This handles "14:00:00" -> "2:00 PM")
+    const parts = timeStr.split(':');
+    let hour = parseInt(parts[0]);
+    const minutes = parts[1];
+    
     const ampm = hour >= 12 ? 'PM' : 'AM';
-    hour = hour % 12; hour = hour ? hour : 12; 
+    hour = hour % 12; 
+    hour = hour ? hour : 12; // convert 0 to 12
+    
     return `${hour}:${minutes} ${ampm}`;
 }
 
@@ -396,4 +432,157 @@ function toggleSidebar() {
     overlay.classList.toggle('active');
 }
 
+
+// 1. Function to load slots from the backend
+async function loadTimeSlots() {
+    const date = document.getElementById('book-date').value;
+    const container = document.getElementById('slots-container');
+    const timeInput = document.getElementById('selected-time');
+    
+    // Clear previous selection
+    timeInput.value = '';
+    
+    if(!date) return;
+    
+    container.innerHTML = '<p style="font-size:0.9rem; color:#666;">Checking availability...</p>';
+
+    try {
+        const response = await fetch(`${API_URL}/slots?date=${date}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const slots = await response.json();
+        
+        container.innerHTML = ''; // Clear "Checking..." text
+
+        if(slots.length === 0) {
+            container.innerHTML = '<p style="color:red; font-size:0.9rem;">Full for this day. Please choose another date.</p>';
+            return;
+        }
+
+        // Create a button for each available time
+        slots.forEach(time => {
+            const btn = document.createElement('div');
+            btn.className = 'slot-btn';
+            btn.textContent = formatTime(time); // Use your existing formatTime helper
+            
+            // When clicked
+            btn.onclick = () => {
+                // Remove 'selected' class from all other buttons
+                document.querySelectorAll('.slot-btn').forEach(b => b.classList.remove('selected'));
+                // Add 'selected' class to this button
+                btn.classList.add('selected');
+                // Save the value to the hidden input
+                timeInput.value = time;
+            };
+            
+            container.appendChild(btn);
+        });
+    } catch(error) {
+        console.error(error);
+        container.innerHTML = '<p style="color:red;">Error loading slots.</p>';
+    }
+}
+
+// 2. MODIFY your existing handleBooking function
+// You need to change how it gets the time value.
+/* Find: const timeRaw = document.getElementById('book-time').value;
+   Replace it with: 
+*/
+// const timeRaw = document.getElementById('selected-time').value;
+
+// --- RESCHEDULE LOGIC ---
+
+function openRescheduleModal(id) {
+    // 1. Find the appointment details from the list we already loaded
+    const apt = allAppointments.find(a => a.id === id);
+    if (!apt) return;
+
+    document.getElementById('reschedule-id').value = id;
+    document.getElementById('reschedule-modal').style.display = 'flex';
+    
+    // 2. Set min date to today (standard rule)
+    const dateInput = document.getElementById('reschedule-date');
+    dateInput.min = new Date().toISOString().split('T')[0];
+
+    // 3. Pre-fill the input with the EXISTING appointment date
+    // (This fixes the "date is assigned" part)
+    dateInput.value = apt.appointment_date;
+
+    // 4. [CRITICAL FIX] Manually trigger the slot loader immediately
+    // This makes the time buttons appear without needing to change the date
+    loadRescheduleSlots(); 
+}
+
+function closeRescheduleModal() {
+    document.getElementById('reschedule-modal').style.display = 'none';
+}
+
+async function loadRescheduleSlots() {
+    const date = document.getElementById('reschedule-date').value;
+    const container = document.getElementById('reschedule-slots');
+    const timeInput = document.getElementById('reschedule-time');
+
+    if(!date) return;
+    
+    container.innerHTML = '<p>Loading...</p>';
+    
+    try {
+        const response = await fetch(`${API_URL}/slots?date=${date}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const slots = await response.json();
+        
+        container.innerHTML = '';
+        if(slots.length === 0) {
+            container.innerHTML = '<p style="color:red">No slots available.</p>';
+            return;
+        }
+
+        slots.forEach(time => {
+            const btn = document.createElement('div');
+            btn.className = 'slot-btn';
+            btn.textContent = formatTime(time);
+            btn.onclick = () => {
+                document.querySelectorAll('#reschedule-slots .slot-btn').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+                timeInput.value = time;
+            };
+            container.appendChild(btn);
+        });
+    } catch (e) { console.error(e); }
+}
+
+async function submitReschedule() {
+    const id = document.getElementById('reschedule-id').value;
+    const date = document.getElementById('reschedule-date').value;
+    const time = document.getElementById('reschedule-time').value;
+
+    if(!date || !time) {
+        Swal.fire('Error', 'Please select a new date and time', 'warning');
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_URL}/appointments/${id}/reschedule`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ appointment_date: date, appointment_time: time })
+        });
+        
+        const data = await res.json();
+        
+        if(res.ok) {
+            Swal.fire('Success', 'Appointment rescheduled!', 'success');
+            closeRescheduleModal();
+            loadAppointments();
+        } else {
+            Swal.fire('Error', data.detail, 'error');
+        }
+    } catch(e) { console.error(e); }
+}
+
+
 loadAppointments();
+
+// Auto-refresh data every 2 seconds (2000 milliseconds)
+setInterval(loadAppointments, 2000);
