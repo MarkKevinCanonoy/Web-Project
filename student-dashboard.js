@@ -250,9 +250,12 @@ else if (apt.status === 'approved') {
         return `
         <div class="appointment-card status-${apt.status}" style="${cardStyle}">
             <div class="apt-header">
-                <span class="apt-date">${niceDate}</span>
-                <span class="status-pill ${apt.status}" style="${pillStyle}">${statusLabel}</span>
-            </div>
+    <div>
+        <span style="font-weight:bold; color:#555; margin-right:5px;">#${apt.id}</span>
+        <span class="apt-date">${niceDate}</span>
+    </div>
+    <span class="status-pill ${apt.status}" style="${pillStyle}">${statusLabel}</span>
+</div>
             <div class="apt-body">
                 <p><strong>Time:</strong> ${niceTime} ${modeBadge}</p>
                 <p><strong>Service:</strong> ${apt.service_type || 'General'}</p>

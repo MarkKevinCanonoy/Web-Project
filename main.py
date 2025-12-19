@@ -32,7 +32,8 @@ if not API_KEY:
     print("warning: google_api_key not found in .env file")
 else:
     genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel('gemma-3-12b-it')
+    # Keeping model as requested
+    model = genai.GenerativeModel('gemma-3-12b-it') 
 
 DB_CONFIG = {
     'host': 'localhost',
@@ -44,28 +45,31 @@ DB_CONFIG = {
 # --- OPTIMIZATION: REAL RECEPTIONIST PERSONA ---
 
 BASE_INSTRUCTION = """
-SYSTEM: You are the School Clinic Receptionist (Nurse Joy).
+SYSTEM: You are the School Clinic Receptionist.
 PERSONA: Warm, caring, efficient, and professional.
-GOAL: Book appointments, but ONLY when you have ALL necessary details.
+GOAL: Manage appointments (Book, Cancel, Reschedule) accurately.
 
 RULES:
 1. **Be Human:** Use natural language. Say "Oh no, I hope you feel better!" if they are sick.
 
-2. **CHECK AVAILABILITY (CRITICAL):** - I (the System) will check the database for you.
-   - Look for a line starting with "[SYSTEM INFO]" at the bottom of this prompt.
-   - **IF [SYSTEM INFO] IS PRESENT:** You MUST list ONLY the times shown there. Do not add or guess other times.
-   - **IF [SYSTEM INFO] IS MISSING/EMPTY:** It means you (the AI) or the System could not understand the date. **DO NOT GUESS TIMES.** Instead, ask the user: "Could you please type the date in YYYY-MM-DD format (e.g. 2025-12-20) so I can check the schedule?"
+2. **CHECK AVAILABILITY (CRITICAL):** - I (the System) will check the database for you based on dates mentioned in the chat.
+   - Look for a line starting with `[SYSTEM INFO]` at the bottom of this prompt.
+   - **IF [SYSTEM INFO] LISTS SLOTS:** You MUST list ONLY those specific times to the user.
+   - **IF [SYSTEM INFO] SAYS 'No slots':** Apologize and ask for a different date.
+   - **IF [SYSTEM INFO] IS MISSING:** Do NOT guess times. Ask the user: "Which date would you like to check?"
 
-3. **MANDATORY CHECKLIST:** Before generating the booking JSON, you MUST verify you have ALL 5 items:
-   - [ ] Date (e.g., tomorrow, next monday)
-   - [ ] Time (e.g., 2pm)
-   - [ ] Service Type (Medical Consultation OR Medical Clearance)
-   - [ ] Urgency (Normal OR Urgent)
-   - [ ] Reason (e.g., headache, fever, enrollment)
+3. **STRICT ID FORMAT (CRITICAL):**
+   - For **Canceling** or **Rescheduling**, the user MUST use the hashtag format (e.g., #23).
+   - If a user provides just a number (e.g., "cancel 23"), **DO NOT** process it.
+   - Instead, reply: "Please put a hashtag before the ID (like #23) so I can confirm the correct record."
+   - Only generate the JSON action when the user explicitly types the `#`.
 
-4. **One-Liner Exception:** ONLY output JSON immediately if the user provided EVERYTHING in one sentence. 
+4. **HANDLING REQUESTS:**
+   - **Booking:** Gather all 5 items (Date, Time, Service, Urgency, Reason) -> Output `book_appointment` JSON.
+   - **Canceling:** Ask for the Appointment ID (with #). -> Output `cancel_appointment` JSON.
+   - **Rescheduling:** Ask for Appointment ID (with #) and New Date/Time. -> Output `reschedule_appointment` JSON.
 
-5. **Context:** Check "EXISTING APPOINTMENTS" below. If they say "Cancel it", use the ID from there.
+5. **ADVICE:** If you give advice, start it with "Tip: " only. Do not use a name.
 
 🔴 CRITICAL: FOR ACTIONS, OUTPUT RAW JSON ONLY. NO MARKDOWN.
 
@@ -77,13 +81,21 @@ RULES:
   "reason": "short reason",
   "service_type": "Medical Consultation", 
   "urgency": "Normal",
-  "ai_advice": "Short friendly advice."
+  "ai_advice": "Tip: Short friendly advice."
 }
 
 [CANCEL FORMAT]
 {
   "action": "cancel_appointment",
   "appointment_id": 123
+}
+
+[RESCHEDULE FORMAT]
+{
+  "action": "reschedule_appointment",
+  "appointment_id": 123,
+  "new_date": "YYYY-MM-DD",
+  "new_time": "HH:MM:00"
 }
 """
 
@@ -103,6 +115,7 @@ def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
 def parse_relative_date(date_str):
+    if not date_str: return None
     today = datetime.now()
     date_str = date_str.lower().strip()
 
@@ -137,7 +150,6 @@ def calculate_available_slots(conn, date_str):
         is_today = (req_date == now.date())
         current_time = now.time()
 
-        # 8 AM to 5 PM
         possible_hours = [8, 9, 10, 11, 13, 14, 15, 16] 
         
         cursor.execute("""
@@ -161,7 +173,6 @@ def calculate_available_slots(conn, date_str):
                 slot_time = dt_time(h, m, 0)
                 slot_dt = datetime.combine(req_date, slot_time)
                 
-                # Check Overlap (1 hour gap)
                 is_blocked = False
                 for taken_dt in taken_start_times:
                     taken_end = taken_dt + timedelta(hours=1)
@@ -172,17 +183,13 @@ def calculate_available_slots(conn, date_str):
                 if is_blocked:
                     continue 
 
-                # Check Past Time
                 if is_today:
                     if slot_time <= current_time:
                         continue 
                 
-                # Format: "08:30 AM" (Single AM/PM)
                 ampm = "AM" if h < 12 else "PM"
                 display_h = h if h <= 12 else h - 12
                 display_h = 12 if display_h == 0 else display_h
-                
-                # Ensure clean formatting
                 nice_time = f"{display_h:02d}:{m:02d} {ampm}"
                 available.append(nice_time)
 
@@ -244,16 +251,12 @@ def validate_booking_rules(cursor, date_str, time_str):
         return "Invalid date format. Please use YYYY-MM-DD."
 
     try:
-        # Clean up time string if it has AM/PM
         clean_time = time_str.upper().replace(" AM", "").replace(" PM", "").strip()
-        
-        # If it was "8:00 AM", clean_time is "8:00". Now parse it.
         if "AM" in time_str.upper() or "PM" in time_str.upper():
              t = datetime.strptime(time_str, "%I:%M %p").time()
         else:
              if len(time_str) == 5: time_str += ":00"
              t = datetime.strptime(time_str, "%H:%M:%S").time()
-        
         booking_time = t
     except ValueError:
         return "Invalid time format."
@@ -265,7 +268,6 @@ def validate_booking_rules(cursor, date_str, time_str):
     if booking_time.hour < 8:
         return "Clinic opens at 8:00 AM."
 
-    # Convert back to HH:MM:SS for SQL comparison
     sql_time_str = booking_time.strftime("%H:%M:%S")
 
     cursor.execute("""
@@ -457,7 +459,7 @@ def create_appointment(appointment: AppointmentCreate, current_user = Depends(ge
 
         # Handle time format conversion
         t_str = appointment.appointment_time
-        if "AM" in t_str or "PM" in t_str:
+        if "AM" in t_str.upper() or "PM" in t_str.upper():
              t = datetime.strptime(t_str, "%I:%M %p").time()
              t_str = t.strftime("%H:%M:%S")
 
@@ -512,7 +514,13 @@ def reschedule_appointment(appointment_id: int, r: AppointmentReschedule, curren
         error_msg = validate_booking_rules(cursor, r.appointment_date, r.appointment_time)
         if error_msg: raise HTTPException(status_code=400, detail=error_msg)
 
-        cursor.execute("UPDATE appointments SET appointment_date = %s, appointment_time = %s, status = 'pending', updated_at = NOW() WHERE id = %s", (r.appointment_date, r.appointment_time, appointment_id))
+        # Handle time format conversion for reschedule
+        t_str = r.appointment_time
+        if "AM" in t_str.upper() or "PM" in t_str.upper():
+             t = datetime.strptime(t_str, "%I:%M %p").time()
+             t_str = t.strftime("%H:%M:%S")
+
+        cursor.execute("UPDATE appointments SET appointment_date = %s, appointment_time = %s, status = 'pending', updated_at = NOW() WHERE id = %s", (r.appointment_date, t_str, appointment_id))
         conn.commit()
         return {"message": "rescheduled"}
     except Error as e: raise HTTPException(status_code=500, detail=str(e))
@@ -577,6 +585,7 @@ def delete_user(user_id: int, current_user = Depends(get_current_user)):
 async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_user)):
     conn = get_db()
     cursor = conn.cursor(dictionary=True, buffered=True)
+    
     try:
         cursor.execute("SELECT id, appointment_date, appointment_time, reason FROM appointments WHERE student_id = %s AND status IN ('pending', 'approved') ORDER BY appointment_date ASC", (current_user['user_id'],))
         active_appts = cursor.fetchall()
@@ -587,35 +596,24 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
     target_date_str = None
     msg_lower = chat.message.lower()
     
-    # 1. Regex for "December 20, 2025" or "Dec 20"
-    # Matches: (FullMonth or 3-letter) (Space) (Day), (Optional Year)
     regex_verbose = r"([a-zA-Z]+)\s+(\d{1,2})(?:,\s*(\d{4}))?"
-    match_verbose = re.search(regex_verbose, chat.message)
-    
-    # 2. Regex for standard "2025-12-20"
+    match_verbose = re.search(regex_verbose, chat.message, re.IGNORECASE)
     match_iso = re.search(r'\d{4}-\d{2}-\d{2}', chat.message)
 
     if match_iso:
         target_date_str = match_iso.group(0)
     elif match_verbose:
-        # Convert "December 20" to "2025-12-20"
         try:
             month_str = match_verbose.group(1)
             day_str = match_verbose.group(2)
             year_str = match_verbose.group(3) or str(datetime.now().year)
-            
-            # Parse using datetime
-            dt_obj = datetime.strptime(f"{month_str} {day_str} {year_str}", "%B %d %Y")
-            target_date_str = dt_obj.strftime("%Y-%m-%d")
-        except:
-            # Fallback for short months like "Dec"
             try:
-                dt_obj = datetime.strptime(f"{month_str} {day_str} {year_str}", "%b %d %Y")
-                target_date_str = dt_obj.strftime("%Y-%m-%d")
+                dt_obj = datetime.strptime(f"{month_str} {day_str} {year_str}", "%B %d %Y")
             except:
-                pass # Failed to parse date string
+                dt_obj = datetime.strptime(f"{month_str} {day_str} {year_str}", "%b %d %Y")
+            target_date_str = dt_obj.strftime("%Y-%m-%d")
+        except: pass 
 
-    # 3. Check for keywords if regex failed
     if not target_date_str:
         if any(x in msg_lower for x in ['today', 'tomorrow', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday']):
             words = msg_lower.split()
@@ -650,12 +648,18 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
             try:
                 json_str = ai_text[ai_text.find('{'):ai_text.rfind('}')+1]
                 data = json.loads(json_str)
+                
+                # --- HELPER TO CLEAN ID ---
+                def clean_id(raw_id):
+                    # Robust cleaning: only digits
+                    return "".join(filter(str.isdigit, str(raw_id)))
+
                 if data.get("action") == "book_appointment":
                     conn = get_db()
                     cursor = conn.cursor(dictionary=True, buffered=True)
-                    p_date = parse_relative_date(data['date'])
+                    p_date = parse_relative_date(data['date']) or data['date']
                     p_time = data['time']
-                    if "AM" in p_time or "PM" in p_time:
+                    if "AM" in p_time.upper() or "PM" in p_time.upper():
                         p_time = datetime.strptime(p_time, "%I:%M %p").strftime("%H:%M:%S")
                     
                     err = validate_booking_rules(cursor, p_date, p_time)
@@ -663,12 +667,45 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                     
                     cursor.execute("INSERT INTO appointments (student_id, appointment_date, appointment_time, service_type, urgency, reason, booking_mode, status) VALUES (%s, %s, %s, %s, %s, %s, 'ai_chatbot', 'pending')", (current_user['user_id'], p_date, p_time, data['service_type'], data['urgency'], data['reason']))
                     conn.commit()
-                    return {"response": f"✅ Booked for {p_date} at {data['time']}!"}
+                    advice_text = data.get('ai_advice', '')
+                    return {"response": f"✅ Booked for {p_date} at {data['time']}! {advice_text}"}
                 
                 elif data.get("action") == "cancel_appointment":
-                    # ... cancellation logic ...
-                    pass
-            except: pass
+                    conn = get_db()
+                    cursor = conn.cursor(buffered=True)
+                    appt_id = clean_id(data.get("appointment_id"))
+                    
+                    cursor.execute("SELECT id FROM appointments WHERE id = %s AND student_id = %s", (appt_id, current_user['user_id']))
+                    if cursor.fetchone():
+                        cursor.execute("UPDATE appointments SET status = 'canceled' WHERE id = %s", (appt_id,))
+                        conn.commit()
+                        msg = f"Appointment #{appt_id} canceled."
+                    else:
+                        msg = f"I couldn't find Appointment #{appt_id}."
+                    cursor.close(); conn.close()
+                    return {"response": msg}
+
+                elif data.get("action") == "reschedule_appointment":
+                    conn = get_db()
+                    cursor = conn.cursor(dictionary=True, buffered=True)
+                    appt_id = clean_id(data.get("appointment_id"))
+                    new_date = parse_relative_date(data['new_date']) or data['new_date']
+                    new_time = data['new_time']
+                    if "AM" in new_time.upper() or "PM" in new_time.upper():
+                        new_time = datetime.strptime(new_time, "%I:%M %p").strftime("%H:%M:%S")
+
+                    cursor.execute("SELECT id FROM appointments WHERE id = %s AND student_id = %s", (appt_id, current_user['user_id']))
+                    if not cursor.fetchone():
+                        return {"response": f"I can't find Appointment #{appt_id}."}
+
+                    err = validate_booking_rules(cursor, new_date, new_time)
+                    if err: return {"response": f"Can't reschedule: {err}"}
+
+                    cursor.execute("UPDATE appointments SET appointment_date = %s, appointment_time = %s, status = 'pending', updated_at = NOW() WHERE id = %s", (new_date, new_time, appt_id))
+                    conn.commit()
+                    return {"response": f"✅ Rescheduled Appointment #{appt_id} to {new_date}!"}
+
+            except Exception as e: print(e)
 
         return {"response": ai_text}
     except Exception as e:

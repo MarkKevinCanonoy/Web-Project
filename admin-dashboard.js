@@ -150,7 +150,12 @@ function renderQueue(queue) {
     let html = `
         <div class="hero-card">
             <div class="hero-time">${niceTime}</div>
-            <div class="hero-name">${nextPatient.student_name}</div>
+            
+            <div class="hero-name">
+                <span style="opacity:0.6; font-size:0.7em;">#${nextPatient.id}</span><br>
+                ${nextPatient.student_name}
+            </div>
+            
             <div class="hero-details">
                 <i class="fas fa-calendar-day"></i> ${niceDate} &nbsp;|&nbsp; 
                 <i class="fas fa-stethoscope"></i> ${nextPatient.service_type}
@@ -177,7 +182,7 @@ function renderQueue(queue) {
             html += `
                 <div class="queue-item">
                     <div>
-                        <h4>${apt.student_name}</h4>
+                        <h4><span style="color:#999; font-size:0.9em; font-weight:normal;">#${apt.id}</span> ${apt.student_name}</h4>
                         <p>${apt.service_type} • ${formatDate(apt.appointment_date)}</p>
                         <p style="font-size: 0.85rem; color: #666; margin-top: 2px;"><em>"${apt.reason}"</em></p>
                     </div>
@@ -191,7 +196,6 @@ function renderQueue(queue) {
 
     container.innerHTML = html;
 }
-
 function handleNoShow(id) {
     Swal.fire({
         title: 'Mark as No Show?',
