@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List, Dict
-from datetime import datetime, timedelta, time as dt_time
+from datetime import datetime, timedelta, time as dt_time, timezone
 import mysql.connector
 from mysql.connector import Error
 import bcrypt
@@ -28,11 +28,13 @@ SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 
+# [FIX] TIMEZONE CONFIGURATION
+TIMEZONE_OFFSET = 8 # Set to 8 for Philippines (UTC+8)
+
 if not API_KEY:
     print("warning: google_api_key not found in .env file")
 else:
     genai.configure(api_key=API_KEY)
-    # Keeping model as requested
     model = genai.GenerativeModel('gemma-3-12b-it') 
 
 DB_CONFIG = {
@@ -47,29 +49,32 @@ DB_CONFIG = {
 BASE_INSTRUCTION = """
 SYSTEM: You are the School Clinic Receptionist.
 PERSONA: Warm, caring, efficient, and professional.
-GOAL: Manage appointments (Book, Cancel, Reschedule) accurately.
+GOAL: Manage appointments (Book, Cancel, Reschedule, Delete) accurately.
 
 RULES:
 1. **Be Human:** Use natural language. Say "Oh no, I hope you feel better!" if they are sick.
 
-2. **CHECK AVAILABILITY (CRITICAL):** - I (the System) will check the database for you based on dates mentioned in the chat.
-   - Look for a line starting with `[SYSTEM INFO]` at the bottom of this prompt.
-   - **IF [SYSTEM INFO] LISTS SLOTS:** You MUST list ONLY those specific times to the user.
-   - **IF [SYSTEM INFO] SAYS 'No slots':** Apologize and ask for a different date.
-   - **IF [SYSTEM INFO] IS MISSING:** Do NOT guess times. Ask the user: "Which date would you like to check?"
+2. **CHECK AVAILABILITY:**
+   - I (the System) will check the database for you.
+   - Look for [SYSTEM INFO] at the bottom.
+   - If it lists slots, offer ONLY those.
+   - If [SYSTEM INFO] is missing, ask: "Which date would you like to check?"
 
-3. **STRICT ID FORMAT (CRITICAL):**
-   - For **Canceling** or **Rescheduling**, the user MUST use the hashtag format (e.g., #23).
-   - If a user provides just a number (e.g., "cancel 23"), **DO NOT** process it.
-   - Instead, reply: "Please put a hashtag before the ID (like #23) so I can confirm the correct record."
-   - Only generate the JSON action when the user explicitly types the `#`.
+3. **HANDLING IDs (STRICT NO DUPLICATION):**
+   - Users may give an ID like "23" or "#23".
+   - **CONFIRMATION:** When repeating the ID back to the user, use the exact number they gave.
+   - **NEVER** double the digits (e.g., DO NOT say "Appointment #2828" if user said "28").
+   - Correct output: "Appointment #28".
 
 4. **HANDLING REQUESTS:**
-   - **Booking:** Gather all 5 items (Date, Time, Service, Urgency, Reason) -> Output `book_appointment` JSON.
-   - **Canceling:** Ask for the Appointment ID (with #). -> Output `cancel_appointment` JSON.
-   - **Rescheduling:** Ask for Appointment ID (with #) and New Date/Time. -> Output `reschedule_appointment` JSON.
+   - **Booking:** Need Date, Time, Service, Urgency, Reason. -> Output `book_appointment` JSON.
+   - **Canceling:** User says "cancel". -> Output `cancel_appointment` JSON (Marks as canceled).
+   - **Deleting:** User says "delete" or "remove" explicitly. -> Output `delete_appointment` JSON (Permanently removes).
+   - **Rescheduling:** 1. Ask for ID (if not provided).
+     2. Ask for New Date & Time.
+     3. **Output:** Only when you have ID, Date, and Time -> Output `reschedule_appointment` JSON.
 
-5. **ADVICE:** If you give advice, start it with "Tip: " only. Do not use a name.
+5. **ADVICE:** If you give advice, start it with "Tip: ".
 
 🔴 CRITICAL: FOR ACTIONS, OUTPUT RAW JSON ONLY. NO MARKDOWN.
 
@@ -87,6 +92,12 @@ RULES:
 [CANCEL FORMAT]
 {
   "action": "cancel_appointment",
+  "appointment_id": 123
+}
+
+[DELETE FORMAT]
+{
+  "action": "delete_appointment",
   "appointment_id": 123
 }
 
@@ -114,19 +125,26 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
+# [FIX] Timezone Aware Date Parser
+def get_local_now():
+    # Helper to get current time with timezone offset
+    utc_now = datetime.utcnow()
+    return utc_now + timedelta(hours=TIMEZONE_OFFSET)
+
 def parse_relative_date(date_str):
     if not date_str: return None
-    today = datetime.now()
+    
+    # Use our FIXED local time, not server system time
+    today = get_local_now()
     date_str = date_str.lower().strip()
 
-    if date_str == "today":
+    if "today" in date_str:
         return today.strftime("%Y-%m-%d")
     
-    if date_str == "tomorrow":
+    if "tomorrow" in date_str:
         return (today + timedelta(days=1)).strftime("%Y-%m-%d")
     
     weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-    
     for i, day in enumerate(weekdays):
         if day in date_str:
             days_ahead = (i - today.weekday() + 7) % 7
@@ -141,7 +159,9 @@ def parse_relative_date(date_str):
 def calculate_available_slots(conn, date_str):
     cursor = conn.cursor(dictionary=True)
     try:
-        now = datetime.now()
+        # Use our FIXED local time
+        now = get_local_now()
+        
         try:
             req_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         except ValueError:
@@ -243,7 +263,10 @@ def create_default_users():
 def validate_booking_rules(cursor, date_str, time_str):
     try:
         booking_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        if booking_date < datetime.now().date():
+        # [FIX] Use local time for past date check
+        now_date = get_local_now().date()
+        
+        if booking_date < now_date:
             return "You cannot book appointments in the past."
         if booking_date.weekday() == 6: 
             return "The clinic is closed on Sundays."
@@ -586,6 +609,7 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
     conn = get_db()
     cursor = conn.cursor(dictionary=True, buffered=True)
     
+    # 1. Fetch Context
     try:
         cursor.execute("SELECT id, appointment_date, appointment_time, reason FROM appointments WHERE student_id = %s AND status IN ('pending', 'approved') ORDER BY appointment_date ASC", (current_user['user_id'],))
         active_appts = cursor.fetchall()
@@ -596,6 +620,7 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
     target_date_str = None
     msg_lower = chat.message.lower()
     
+    # 2. Date Parsing
     regex_verbose = r"([a-zA-Z]+)\s+(\d{1,2})(?:,\s*(\d{4}))?"
     match_verbose = re.search(regex_verbose, chat.message, re.IGNORECASE)
     match_iso = re.search(r'\d{4}-\d{2}-\d{2}', chat.message)
@@ -606,7 +631,7 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
         try:
             month_str = match_verbose.group(1)
             day_str = match_verbose.group(2)
-            year_str = match_verbose.group(3) or str(datetime.now().year)
+            year_str = match_verbose.group(3) or str(get_local_now().year)
             try:
                 dt_obj = datetime.strptime(f"{month_str} {day_str} {year_str}", "%B %d %Y")
             except:
@@ -622,17 +647,28 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                     target_date_str = parse_relative_date(w)
                     break
     
+    # 3. Calculate Slots (uses local time now)
     if target_date_str:
         conn = get_db()
         slots = calculate_available_slots(conn, target_date_str)
         conn.close()
         system_slot_info = f"\n[SYSTEM INFO] Available slots for {target_date_str}: {', '.join(slots)}" if slots else f"\n[SYSTEM INFO] No slots for {target_date_str}."
 
-    final_instruction = f"{BASE_INSTRUCTION}\nStudent: {current_user['full_name']}\nDate: {datetime.now().strftime('%Y-%m-%d')}\nAppts: {appt_text}\n{system_slot_info}"
+    # 4. Prompt with Local Date Context
+    current_local_date = get_local_now().strftime("%Y-%m-%d, %A")
+    final_instruction = f"{BASE_INSTRUCTION}\nStudent: {current_user['full_name']}\nToday's Date (Local): {current_local_date}\nAppts: {appt_text}\n{system_slot_info}"
 
     try:
+        # [fix] clean history to remove duplicates
+        # this checks if the last message in history is the same as the new one
+        clean_history = chat.history
+        if clean_history and clean_history[-1].get("message") == chat.message:
+            clean_history = clean_history[:-1]
+
         history_for_google = [{"role": "user", "parts": [final_instruction]}, {"role": "model", "parts": ["Understood."]}]
-        for msg in chat.history[-6:]:
+        
+        # [fix] use the clean_history here
+        for msg in clean_history[-6:]:
             history_for_google.append({"role": "user" if msg.get("role")=="user" else "model", "parts": [msg.get("message", "")]})
 
         ai_text = "Sorry, busy."
@@ -649,9 +685,7 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                 json_str = ai_text[ai_text.find('{'):ai_text.rfind('}')+1]
                 data = json.loads(json_str)
                 
-                # --- HELPER TO CLEAN ID ---
                 def clean_id(raw_id):
-                    # Robust cleaning: only digits
                     return "".join(filter(str.isdigit, str(raw_id)))
 
                 if data.get("action") == "book_appointment":
@@ -668,18 +702,31 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                     cursor.execute("INSERT INTO appointments (student_id, appointment_date, appointment_time, service_type, urgency, reason, booking_mode, status) VALUES (%s, %s, %s, %s, %s, %s, 'ai_chatbot', 'pending')", (current_user['user_id'], p_date, p_time, data['service_type'], data['urgency'], data['reason']))
                     conn.commit()
                     advice_text = data.get('ai_advice', '')
-                    return {"response": f"✅ Booked for {p_date} at {data['time']}! {advice_text}"}
+                    return {"response": f"Booked for {p_date} at {data['time']}! {advice_text}"}
                 
                 elif data.get("action") == "cancel_appointment":
                     conn = get_db()
                     cursor = conn.cursor(buffered=True)
                     appt_id = clean_id(data.get("appointment_id"))
-                    
                     cursor.execute("SELECT id FROM appointments WHERE id = %s AND student_id = %s", (appt_id, current_user['user_id']))
                     if cursor.fetchone():
                         cursor.execute("UPDATE appointments SET status = 'canceled' WHERE id = %s", (appt_id,))
                         conn.commit()
                         msg = f"Appointment #{appt_id} canceled."
+                    else:
+                        msg = f"I couldn't find Appointment #{appt_id}."
+                    cursor.close(); conn.close()
+                    return {"response": msg}
+
+                elif data.get("action") == "delete_appointment":
+                    conn = get_db()
+                    cursor = conn.cursor(buffered=True)
+                    appt_id = clean_id(data.get("appointment_id"))
+                    cursor.execute("SELECT id FROM appointments WHERE id = %s AND student_id = %s", (appt_id, current_user['user_id']))
+                    if cursor.fetchone():
+                        cursor.execute("DELETE FROM appointments WHERE id = %s", (appt_id,))
+                        conn.commit()
+                        msg = f"Appointment #{appt_id} deleted permanently."
                     else:
                         msg = f"I couldn't find Appointment #{appt_id}."
                     cursor.close(); conn.close()
@@ -703,7 +750,7 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
 
                     cursor.execute("UPDATE appointments SET appointment_date = %s, appointment_time = %s, status = 'pending', updated_at = NOW() WHERE id = %s", (new_date, new_time, appt_id))
                     conn.commit()
-                    return {"response": f"✅ Rescheduled Appointment #{appt_id} to {new_date}!"}
+                    return {"response": f"Rescheduled Appointment #{appt_id} to {new_date}!"}
 
             except Exception as e: print(e)
 
