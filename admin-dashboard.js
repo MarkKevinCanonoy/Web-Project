@@ -1,5 +1,6 @@
 const API_URL = 'http://localhost:8000/api';
 let allAppointments = [];
+let allUsers = []; // [NEW] Store users globally for search
 let currentAppointmentId = null;
 let html5QrcodeScanner = null;
 
@@ -96,10 +97,6 @@ function togglePasswordVisibility(inputId, icon) {
 // ==========================================
 //  QUEUE LOGIC 
 // ==========================================
-
-
-
-
 
 // [UPDATED] Silent Queue Load
 async function loadQueue() {
@@ -374,7 +371,15 @@ function applyFiltersAndSort() {
     filtered.sort((a, b) => {
         const priorityA = statusPriority[a.status] || 99;
         const priorityB = statusPriority[b.status] || 99;
-        if (priorityA !== priorityB) return priorityA - priorityB; 
+        if (priorityA !== priorityB) return priorityA - priorityB;
+
+        const isUrgentA = (a.urgency || '').toLowerCase() === 'urgent';
+        const isUrgentB = (b.urgency || '').toLowerCase() === 'urgent';
+        
+        if (isUrgentA && !isUrgentB) return -1; // A moves up
+        if (!isUrgentA && isUrgentB) return 1;  // B moves up
+
+
         return new Date(b.appointment_date + 'T' + b.appointment_time) - new Date(a.appointment_date + 'T' + a.appointment_time);
     });
 
@@ -489,42 +494,58 @@ async function updateAppointmentStatus(status) {
     loadAppointments(); loadQueue();
 }
 
-// [UPDATED] Load Users with Self-Delete Protection
+// [UPDATED] Load Users with Self-Delete Protection & Search
 async function loadUsers() {
     try {
         const response = await fetch(`${API_URL}/users`, { headers: { 'Authorization': `Bearer ${token}` } });
-        let users = await response.json();
-        const filter = document.getElementById('user-role-filter') ? document.getElementById('user-role-filter').value : 'all';
-        if (filter === 'student') users = users.filter(u => u.role === 'student');
-        else if (filter === 'admin') users = users.filter(u => u.role === 'admin' || u.role === 'super_admin');
-        
-        const tbody = document.getElementById('users-list');
-        tbody.innerHTML = '';
-        
-        if (users.length === 0) { tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No users found.</td></tr>`; return; }
-        
-        users.forEach(u => {
-            let roleLabel = u.role === 'student' ? 'Student' : (u.role === 'super_admin' ? 'Super Admin' : 'Admin');
-            let roleColor = u.role === 'student' ? 'green' : 'blue';
-            
-            // CHECK: If this row is YOU, don't show the delete button
-            let deleteBtn = `<button onclick="deleteUser(${u.id})" class="btn-delete"><i class="fas fa-trash"></i></button>`;
-            
-            if (u.id === currentUserId) {
-                deleteBtn = `<span style="color:#aaa; font-size:0.8rem;">(You)</span>`;
-            }
-
-            tbody.insertAdjacentHTML('beforeend', `
-                <tr>
-                    <td>${u.full_name}</td>
-                    <td>${u.email}</td>
-                    <td><span style="color:${roleColor};font-weight:bold;">${roleLabel}</span></td>
-                    <td>${new Date(u.created_at).toLocaleDateString()}</td>
-                    <td>${deleteBtn}</td>
-                </tr>
-            `);
-        });
+        allUsers = await response.json(); // Store in global variable
+        renderUsers(); // Call filter & display function
     } catch (e) { console.error(e); }
+}
+
+// [NEW] Separate function to filter and render without re-fetching
+function renderUsers() {
+    const filter = document.getElementById('user-role-filter') ? document.getElementById('user-role-filter').value : 'all';
+    const searchTerm = document.getElementById('user-search') ? document.getElementById('user-search').value.toLowerCase() : '';
+    
+    // Apply Filters
+    let users = allUsers.filter(u => {
+        const matchesRole = (filter === 'all') || 
+                            (filter === 'student' && u.role === 'student') || 
+                            (filter === 'admin' && (u.role === 'admin' || u.role === 'super_admin'));
+        
+        const matchesSearch = u.full_name.toLowerCase().includes(searchTerm) || 
+                              u.email.toLowerCase().includes(searchTerm);
+        
+        return matchesRole && matchesSearch;
+    });
+
+    const tbody = document.getElementById('users-list');
+    tbody.innerHTML = '';
+    
+    if (users.length === 0) { tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No users found.</td></tr>`; return; }
+    
+    users.forEach(u => {
+        let roleLabel = u.role === 'student' ? 'Student' : (u.role === 'super_admin' ? 'Super Admin' : 'Admin');
+        let roleColor = u.role === 'student' ? 'green' : 'blue';
+        
+        // CHECK: If this row is YOU, don't show the delete button
+        let deleteBtn = `<button onclick="deleteUser(${u.id})" class="btn-delete"><i class="fas fa-trash"></i></button>`;
+        
+        if (u.id === currentUserId) {
+            deleteBtn = `<span style="color:#aaa; font-size:0.8rem;">(You)</span>`;
+        }
+
+        tbody.insertAdjacentHTML('beforeend', `
+            <tr>
+                <td>${u.full_name}</td>
+                <td>${u.email}</td>
+                <td><span style="color:${roleColor};font-weight:bold;">${roleLabel}</span></td>
+                <td>${new Date(u.created_at).toLocaleDateString()}</td>
+                <td>${deleteBtn}</td>
+            </tr>
+        `);
+    });
 }
 
 async function deleteUser(id) {

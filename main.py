@@ -477,6 +477,12 @@ def create_appointment(appointment: AppointmentCreate, current_user = Depends(ge
     conn = get_db()
     cursor = conn.cursor(dictionary=True, buffered=True) 
     try:
+        # [NEW: Spam Prevention]
+        # Check if the user already has a PENDING appointment
+        cursor.execute("SELECT id FROM appointments WHERE student_id = %s AND status = 'pending'", (current_user['user_id'],))
+        if cursor.fetchone():
+             raise HTTPException(status_code=400, detail="You already have a pending appointment. Please wait for it to be approved or cancel it.")
+        
         error_message = validate_booking_rules(cursor, appointment.appointment_date, appointment.appointment_time)
         if error_message: raise HTTPException(status_code=400, detail=error_message)
 
@@ -691,6 +697,14 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                 if data.get("action") == "book_appointment":
                     conn = get_db()
                     cursor = conn.cursor(dictionary=True, buffered=True)
+
+                    # [FIX] SPAM PREVENTION IN CHATBOT
+                    # Check if the user already has a PENDING appointment
+                    cursor.execute("SELECT id FROM appointments WHERE student_id = %s AND status = 'pending'", (current_user['user_id'],))
+                    if cursor.fetchone():
+                        cursor.close(); conn.close()
+                        return {"response": "You already have a pending appointment. Please wait for it to be approved or cancel it."}
+                    
                     p_date = parse_relative_date(data['date']) or data['date']
                     p_time = data['time']
                     if "AM" in p_time.upper() or "PM" in p_time.upper():
@@ -702,6 +716,7 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                     cursor.execute("INSERT INTO appointments (student_id, appointment_date, appointment_time, service_type, urgency, reason, booking_mode, status) VALUES (%s, %s, %s, %s, %s, %s, 'ai_chatbot', 'pending')", (current_user['user_id'], p_date, p_time, data['service_type'], data['urgency'], data['reason']))
                     conn.commit()
                     advice_text = data.get('ai_advice', '')
+                    # [FIX] Removed emoji
                     return {"response": f"Booked for {p_date} at {data['time']}! {advice_text}"}
                 
                 elif data.get("action") == "cancel_appointment":
@@ -722,6 +737,7 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                     conn = get_db()
                     cursor = conn.cursor(buffered=True)
                     appt_id = clean_id(data.get("appointment_id"))
+                    # [SAFETY NET] Check if the appointment belongs to the user
                     cursor.execute("SELECT id FROM appointments WHERE id = %s AND student_id = %s", (appt_id, current_user['user_id']))
                     if cursor.fetchone():
                         cursor.execute("DELETE FROM appointments WHERE id = %s", (appt_id,))
@@ -750,6 +766,7 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
 
                     cursor.execute("UPDATE appointments SET appointment_date = %s, appointment_time = %s, status = 'pending', updated_at = NOW() WHERE id = %s", (new_date, new_time, appt_id))
                     conn.commit()
+                    # [FIX] Removed emoji
                     return {"response": f"Rescheduled Appointment #{appt_id} to {new_date}!"}
 
             except Exception as e: print(e)

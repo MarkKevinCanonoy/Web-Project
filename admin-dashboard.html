@@ -115,7 +115,9 @@
                         <h2>Manage Users</h2>
                         
                         <div style="display: flex; gap: 10px;">
-                            <select id="user-role-filter" onchange="loadUsers()" style="padding: 8px; border-radius: 6px; border: 1px solid #ddd;">
+                            <input type="text" id="user-search" onkeyup="renderUsers()" placeholder="Search name or email..." style="padding: 8px; border-radius: 6px; border: 1px solid #ddd;">
+
+                            <select id="user-role-filter" onchange="renderUsers()" style="padding: 8px; border-radius: 6px; border: 1px solid #ddd;">
                                 <option value="all">Show All</option>
                                 <option value="admin">Admins Only</option>
                                 <option value="student">Students Only</option>
@@ -180,9 +182,7 @@
         </div>
     </div>
 
-<!-------------------------POP-UP-Add-new-admin------------------------------------->
-
-    <div id="add-user-modal" class="modal">
+<div id="add-user-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
                 <h2>Add New User</h2>
@@ -217,8 +217,6 @@
             </form>
         </div>
     </div>
-
-    <!------------------------------------------------------>
 
     <footer class="footer"><p>© 2025 Eastern Visayas State University - Ormoc Campus</p></footer>
     
