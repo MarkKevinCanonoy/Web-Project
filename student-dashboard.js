@@ -311,7 +311,7 @@ async function sendChatMessage() {
     input.value = '';
     chatHistory.push({ role: "user", message: message });
 
-    // [FIX] Show typing
+    // Show typing
     showTypingIndicator();
 
     try {
@@ -322,13 +322,15 @@ async function sendChatMessage() {
         });
         const data = await response.json();
         
-        // [FIX] Remove typing before showing answer
+        // Remove typing before showing answer
         removeTypingIndicator();
 
         chatHistory.push({ role: "model", message: data.response });
         addChatMessage('bot', data.response);
         
-        if (data.response.toLowerCase().includes("booked") || data.response.toLowerCase().includes("canceled")) {
+        // [FIX] RELIABLE REFRESH: If backend says "refresh: true", reload immediately.
+        if (data.refresh === true) {
+            console.log("Action performed by AI. Refreshing list...");
             loadAppointments(); 
         }
     } catch (error) {

@@ -67,7 +67,11 @@ RULES:
    - Correct output: "Appointment #28".
 
 4. **HANDLING REQUESTS:**
-   - **Booking:** Need Date, Time, Service, Urgency, Reason. -> Output `book_appointment` JSON.
+   - **Booking:** Need Date, Time, Service, Urgency, Reason. 
+   - **[CRITICAL] ASK FOR SERVICE TYPE:** You MUST ask if they need a "Medical Consultation" or "Medical Clearance" if they haven't specified it.
+   - **[CRITICAL] URGENCY LEVELS:** The ONLY allowed urgency levels are "Normal" or "Urgent". **Do NOT ask if it is an emergency.** If the user says it's an emergency, classify it as "Urgent".
+   - **Output:** Only when you have Date, Time, Service, Urgency, and Reason -> Output `book_appointment` JSON.
+   
    - **Canceling:** User says "cancel". -> Output `cancel_appointment` JSON (Marks as canceled).
    - **Deleting:** User says "delete" or "remove" explicitly. -> Output `delete_appointment` JSON (Permanently removes).
    - **Rescheduling:** 1. Ask for ID (if not provided).
@@ -477,11 +481,25 @@ def create_appointment(appointment: AppointmentCreate, current_user = Depends(ge
     conn = get_db()
     cursor = conn.cursor(dictionary=True, buffered=True) 
     try:
-        # [NEW: Spam Prevention]
-        # Check if the user already has a PENDING appointment
-        cursor.execute("SELECT id FROM appointments WHERE student_id = %s AND status = 'pending'", (current_user['user_id'],))
-        if cursor.fetchone():
-             raise HTTPException(status_code=400, detail="You already have a pending appointment. Please wait for it to be approved or cancel it.")
+        # [MODIFIED: Smart Spam Prevention]
+        # Check if user has a pending appointment of the SAME urgency level
+        cursor.execute("""
+            SELECT id FROM appointments 
+            WHERE student_id = %s 
+            AND status = 'pending' 
+            AND urgency = %s
+        """, (current_user['user_id'], appointment.urgency))
+        
+        existing_appt = cursor.fetchone()
+        
+        if existing_appt:
+             # Custom error messages based on what they are trying to do
+             if appointment.urgency == 'Urgent':
+                 detail_msg = "You already have a pending URGENT request. Please wait for the nurse to respond."
+             else:
+                 detail_msg = "You already have a pending standard appointment. Please wait for it to be approved."
+                 
+             raise HTTPException(status_code=400, detail=detail_msg)
         
         error_message = validate_booking_rules(cursor, appointment.appointment_date, appointment.appointment_time)
         if error_message: raise HTTPException(status_code=400, detail=error_message)
@@ -698,12 +716,23 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                     conn = get_db()
                     cursor = conn.cursor(dictionary=True, buffered=True)
 
-                    # [FIX] SPAM PREVENTION IN CHATBOT
-                    # Check if the user already has a PENDING appointment
-                    cursor.execute("SELECT id FROM appointments WHERE student_id = %s AND status = 'pending'", (current_user['user_id'],))
+                    # [FIX] SMART SPAM PREVENTION IN CHATBOT (1+1 Rule)
+                    # Check if the user already has a PENDING appointment of the SAME URGENCY
+                    requested_urgency = data.get('urgency', 'Normal')
+                    
+                    cursor.execute("""
+                        SELECT id FROM appointments 
+                        WHERE student_id = %s 
+                        AND status = 'pending' 
+                        AND urgency = %s
+                    """, (current_user['user_id'], requested_urgency))
+                    
                     if cursor.fetchone():
                         cursor.close(); conn.close()
-                        return {"response": "You already have a pending appointment. Please wait for it to be approved or cancel it."}
+                        if requested_urgency == 'Urgent':
+                            return {"response": "You already have a pending URGENT request. Please wait for the nurse to respond.", "refresh": False}
+                        else:
+                            return {"response": "You already have a pending standard appointment. Please wait for it to be approved.", "refresh": False}
                     
                     p_date = parse_relative_date(data['date']) or data['date']
                     p_time = data['time']
@@ -713,40 +742,47 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                     err = validate_booking_rules(cursor, p_date, p_time)
                     if err: return {"response": err, "requires_action": False}
                     
-                    cursor.execute("INSERT INTO appointments (student_id, appointment_date, appointment_time, service_type, urgency, reason, booking_mode, status) VALUES (%s, %s, %s, %s, %s, %s, 'ai_chatbot', 'pending')", (current_user['user_id'], p_date, p_time, data['service_type'], data['urgency'], data['reason']))
+                    cursor.execute("INSERT INTO appointments (student_id, appointment_date, appointment_time, service_type, urgency, reason, booking_mode, status) VALUES (%s, %s, %s, %s, %s, %s, 'ai_chatbot', 'pending')", (current_user['user_id'], p_date, p_time, data['service_type'], requested_urgency, data['reason']))
                     conn.commit()
                     advice_text = data.get('ai_advice', '')
-                    # [FIX] Removed emoji
-                    return {"response": f"Booked for {p_date} at {data['time']}! {advice_text}"}
+                    # [FIX] Added refresh flag
+                    return {"response": f"Booked for {p_date} at {data['time']}! {advice_text}", "refresh": True}
                 
                 elif data.get("action") == "cancel_appointment":
                     conn = get_db()
                     cursor = conn.cursor(buffered=True)
                     appt_id = clean_id(data.get("appointment_id"))
-                    cursor.execute("SELECT id FROM appointments WHERE id = %s AND student_id = %s", (appt_id, current_user['user_id']))
-                    if cursor.fetchone():
-                        cursor.execute("UPDATE appointments SET status = 'canceled' WHERE id = %s", (appt_id,))
-                        conn.commit()
+                    
+                    # [FIX] Direct execution to avoid unread result error
+                    cursor.execute("UPDATE appointments SET status = 'canceled' WHERE id = %s AND student_id = %s", (appt_id, current_user['user_id']))
+                    conn.commit()
+                    
+                    if cursor.rowcount > 0:
                         msg = f"Appointment #{appt_id} canceled."
                     else:
-                        msg = f"I couldn't find Appointment #{appt_id}."
+                        msg = f"I couldn't find Appointment #{appt_id} or it doesn't belong to you."
+                    
                     cursor.close(); conn.close()
-                    return {"response": msg}
+                    # [FIX] Added refresh flag
+                    return {"response": msg, "refresh": True}
 
                 elif data.get("action") == "delete_appointment":
                     conn = get_db()
                     cursor = conn.cursor(buffered=True)
                     appt_id = clean_id(data.get("appointment_id"))
-                    # [SAFETY NET] Check if the appointment belongs to the user
-                    cursor.execute("SELECT id FROM appointments WHERE id = %s AND student_id = %s", (appt_id, current_user['user_id']))
-                    if cursor.fetchone():
-                        cursor.execute("DELETE FROM appointments WHERE id = %s", (appt_id,))
-                        conn.commit()
+                    
+                    # [FIX] Direct execution to avoid unread result error
+                    cursor.execute("DELETE FROM appointments WHERE id = %s AND student_id = %s", (appt_id, current_user['user_id']))
+                    conn.commit()
+                    
+                    if cursor.rowcount > 0:
                         msg = f"Appointment #{appt_id} deleted permanently."
                     else:
-                        msg = f"I couldn't find Appointment #{appt_id}."
+                        msg = f"I couldn't find Appointment #{appt_id} or it doesn't belong to you."
+                    
                     cursor.close(); conn.close()
-                    return {"response": msg}
+                    # [FIX] Added refresh flag
+                    return {"response": msg, "refresh": True}
 
                 elif data.get("action") == "reschedule_appointment":
                     conn = get_db()
@@ -757,17 +793,22 @@ async def chat_booking(chat: ChatMessage, current_user = Depends(get_current_use
                     if "AM" in new_time.upper() or "PM" in new_time.upper():
                         new_time = datetime.strptime(new_time, "%I:%M %p").strftime("%H:%M:%S")
 
+                    # [FIX] Ensure cursor is clean before validation check
                     cursor.execute("SELECT id FROM appointments WHERE id = %s AND student_id = %s", (appt_id, current_user['user_id']))
                     if not cursor.fetchone():
+                        cursor.close(); conn.close()
                         return {"response": f"I can't find Appointment #{appt_id}."}
+                    
+                    # Consume any remaining result to prevent 'Unread result' error
+                    cursor.fetchall() 
 
                     err = validate_booking_rules(cursor, new_date, new_time)
                     if err: return {"response": f"Can't reschedule: {err}"}
 
                     cursor.execute("UPDATE appointments SET appointment_date = %s, appointment_time = %s, status = 'pending', updated_at = NOW() WHERE id = %s", (new_date, new_time, appt_id))
                     conn.commit()
-                    # [FIX] Removed emoji
-                    return {"response": f"Rescheduled Appointment #{appt_id} to {new_date}!"}
+                    # [FIX] Added refresh flag
+                    return {"response": f"Rescheduled Appointment #{appt_id} to {new_date}!", "refresh": True}
 
             except Exception as e: print(e)
 

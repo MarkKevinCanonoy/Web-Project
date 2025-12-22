@@ -213,7 +213,7 @@ function handleCompleteQueue(id) {
     Swal.fire({
         title: 'Complete Visit',
         input: 'textarea',
-        inputLabel: 'Nurse Notes / Diagnosis',
+        inputLabel: 'Admin Notes / Diagnosis',
         inputPlaceholder: 'e.g., Given Paracetamol, advised rest, temperature 37.5C...',
         inputAttributes: {
             'aria-label': 'Type your notes here'
