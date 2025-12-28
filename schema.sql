@@ -1,57 +1,35 @@
-CREATE DATABASE IF NOT EXISTS school_clinic;
+DROP DATABASE IF EXISTS school_clinic;
+CREATE DATABASE school_clinic;
 USE school_clinic;
 
--- 1. Users Table
-CREATE TABLE users (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    full_name VARCHAR(255) NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password VARCHAR(255) NOT NULL,
-    role ENUM('student', 'admin', 'super_admin') DEFAULT 'student',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-
--- 2. Appointments Table (UPDATED)
+-- 1. Appointments Table (Merged with Student Info)
 CREATE TABLE appointments (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    student_id INT NOT NULL,
     
-    -- New Fields Required by your Code
-    service_type VARCHAR(100) NOT NULL,  -- Stores "Medical Consultation" or "Medical Clearance"
-    urgency ENUM('Normal', 'Urgent') DEFAULT 'Normal',        -- Stores "Normal" or "Urgent"
+    -- [NEW] Student Info stored directly here
+    student_name VARCHAR(255) NOT NULL,
+    -- Removed student_id_number as requested
+    student_email VARCHAR(255), 
+    
+    service_type VARCHAR(100) NOT NULL,
+    urgency ENUM('Normal', 'Urgent') DEFAULT 'Normal',
     
     appointment_date DATE NOT NULL,
     appointment_time TIME NOT NULL,
     reason TEXT NOT NULL,
     
     booking_mode ENUM('standard', 'ai_chatbot') DEFAULT 'standard',
-    status ENUM('pending', 'approved', 'rejected', 'canceled', 'completed') DEFAULT 'pending',
+    status ENUM('pending', 'approved', 'rejected', 'canceled', 'completed', 'noshow') DEFAULT 'pending',
     admin_note TEXT,
     
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    
-    FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
--- 3. Chat History Table
+-- 2. Chat History
 CREATE TABLE chat_history (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    student_id INT NOT NULL,
     message TEXT NOT NULL,
     sender ENUM('user', 'bot') NOT NULL,
-    appointment_id INT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE SET NULL
-);
-
-CREATE TABLE notifications (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    student_id INT NOT NULL,
-    message TEXT NOT NULL,
-    is_read BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

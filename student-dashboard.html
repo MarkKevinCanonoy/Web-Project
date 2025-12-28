@@ -3,65 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Student Dashboard</title>
+    <title>Clinic Kiosk</title>
     <link rel="stylesheet" href="style.css"> 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
-    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
 <body style="background: url('images/bg.png') no-repeat center center fixed; background-size: cover;">
 
-    <div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
-
-    <div class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <h3>Menu</h3>
-            <button onclick="toggleSidebar()" style="background:none; border:none; font-size:1.2rem; cursor:pointer;">
-                <i class="fas fa-times"></i>
-            </button>
-        </div>
-        
-        <button class="sidebar-btn active" onclick="showTab('booking'); toggleSidebar()">
-            <i class="fas fa-calendar-plus"></i> Book Appointment
-        </button>
-        <button class="sidebar-btn" onclick="showTab('chatbot'); toggleSidebar()">
-            <i class="fas fa-robot"></i> AI Assistant
-        </button>
-        <button class="sidebar-btn" onclick="showTab('appointments'); toggleSidebar()">
-            <i class="fas fa-list"></i> My Appointments
-        </button>
-        
-        <div style="margin-top: auto; border-top: 1px solid #eee; padding-top: 10px;">
-            <button onclick="logout()" class="sidebar-btn" style="color: var(--danger);">
-                <i class="fas fa-sign-out-alt"></i> Logout
-            </button>
-        </div>
-    </div>
-
-    <header class="top-bar">
-        <div class="header-content">
-            <div class="brand">
-                <button class="menu-btn" onclick="toggleSidebar()">
-                    <i class="fas fa-bars"></i>
-                </button>
-
-                <img src="images/logo.jpg" alt="Logo" style="height: 40px; border-radius: 50%; margin-right: 10px;">
-                <h1>Student Dashboard</h1>
-            </div>
-            <div class="user-info">
-                <span id="user-name">Welcome, Student</span>
-                <button onclick="logout()" class="btn-logout">
-                    <i class="fas fa-sign-out-alt"></i> Logout
-                </button>
-            </div>
-        </div>
-    </header>
-
-    <div class="container">
+    <div class="container" style="max-width: 800px; margin-top: 50px;">
         <main class="dashboard">
             
+            <div class="card" style="text-align:center; margin-bottom:20px;">
+                <img src="images/logo.jpg" alt="Logo" style="height: 60px; border-radius: 50%; margin-bottom: 10px;">
+                <h1>School Clinic Kiosk</h1>
+                <p>Book your appointment instantly. No login required.</p>
+            </div>
+
             <div class="dashboard-tabs">
                 <button class="tab-btn active" onclick="showTab('booking')">
                     <i class="fas fa-calendar-plus"></i> Book Appointment
@@ -69,24 +28,17 @@
                 <button class="tab-btn" onclick="showTab('chatbot')">
                     <i class="fas fa-robot"></i> AI Assistant
                 </button>
-                <button class="tab-btn" onclick="showTab('appointments')">
-                    <i class="fas fa-list"></i> My Appointments
-                </button>
             </div>
 
             <div id="booking-tab" class="tab-content active">
                 <div class="booking-card-wrapper">
-                    <div class="booking-header-banner">
-                        <div class="banner-icon">
-                            <i class="fas fa-notes-medical"></i>
-                        </div>
-                        <div class="banner-text">
-                            <h2>Book Appointment</h2>
-                            <p>Schedule a visit with the school clinic.</p>
-                        </div>
-                    </div>
-                    
                     <form id="booking-form" onsubmit="handleBooking(event)" class="booking-form-body">
+                        
+                        <div class="input-group">
+                            <label><i class="fas fa-user"></i> Full Name</label>
+                            <input type="text" id="student-name" placeholder="Enter your full name" required>
+                        </div>
+
                         <div class="form-row">
                             <div class="input-group">
                                 <label><i class="fas fa-stethoscope"></i> Service Type</label>
@@ -98,56 +50,34 @@
                             </div>
                             <div class="input-group">
                                 <label><i class="far fa-calendar-alt"></i> Date</label>
-                                <!--<input type="date" id="book-date" required>-->
                                 <input type="date" id="book-date" onchange="loadTimeSlots()" required>
                             </div>
                         </div>
 
-                        <div class="form-row">
-                            <div class="input-group">
-    <label><i class="far fa-clock"></i> Available Time Slots</label>
-    
-    <div id="slots-container" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; margin-top: 5px;">
-        <p style="color:#888; font-style:italic; font-size: 0.9rem;">Please select a date first.</p>
-    </div>
-
-    <input type="hidden" id="selected-time" required>
-    
-    <style>
-        .slot-btn {
-            padding: 10px;
-            background: white;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            cursor: pointer;
-            text-align: center;
-            font-size: 0.9rem;
-            transition: 0.2s;
-        }
-        .slot-btn:hover {
-            border-color: #1E88E5;
-            color: #1E88E5;
-        }
-        .slot-btn.selected {
-            background: #1E88E5;
-            color: white;
-            border-color: #1E88E5;
-            font-weight: bold;
-        }
-    </style>
-</div>
-                            <div class="input-group">
-                                <label><i class="fas fa-exclamation-circle"></i> Urgency</label>
-                                <select id="book-urgency">
-                                    <option value="Normal">Normal</option>
-                                    <option value="Urgent">Urgent</option>
-                                </select>
+                        <div class="input-group">
+                            <label><i class="far fa-clock"></i> Available Time Slots</label>
+                            <div id="slots-container" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; margin-top: 5px;">
+                                <p style="color:#888; font-style:italic; font-size: 0.9rem;">Please select a date first.</p>
                             </div>
+                            <input type="hidden" id="selected-time" required>
+                            <style>
+                                .slot-btn { padding: 10px; background: white; border: 1px solid #ddd; border-radius: 8px; cursor: pointer; text-align: center; transition: 0.2s; }
+                                .slot-btn:hover { border-color: #1E88E5; color: #1E88E5; }
+                                .slot-btn.selected { background: #1E88E5; color: white; border-color: #1E88E5; font-weight: bold; }
+                            </style>
                         </div>
 
                         <div class="input-group">
-                            <label><i class="fas fa-comment-medical"></i> Reason for Visit</label>
-                            <textarea id="book-reason" rows="3" placeholder="Please describe your symptoms or concern..." required></textarea>
+                            <label><i class="fas fa-exclamation-circle"></i> Urgency</label>
+                            <select id="book-urgency">
+                                <option value="Normal">Normal</option>
+                                <option value="Urgent">Urgent</option>
+                            </select>
+                        </div>
+
+                        <div class="input-group">
+                            <label><i class="fas fa-comment-medical"></i> Reason</label>
+                            <textarea id="book-reason" rows="2" placeholder="Describe symptoms..." required></textarea>
                         </div>
 
                         <div class="form-actions">
@@ -160,7 +90,7 @@
             </div>
 
             <div id="chatbot-tab" class="tab-content">
-                <div class="chat-wrapper">
+                <div class="chat-wrapper" style="height: 400px;">
                     <div class="chat-header">
                         <h2>Clinic AI Assistant</h2>
                         <span style="font-size: 0.8rem; color: #a2fca2;">● Online</span>
@@ -177,135 +107,26 @@
                 </div>
             </div>
 
-            <div id="appointments-tab" class="tab-content">
-                <div class="card"> 
-                    <div class="section-header">
-                        <h2>My Appointments</h2>
-                        <div style="display:flex; gap:10px; align-items:center;">
-                            <select id="status-filter" onchange="filterAppointments()" style="padding: 8px; border-radius:6px; border:1px solid #ddd;">
-                                <option value="all">All Status</option>
-                                <option value="pending">Pending</option>
-                                <option value="approved">Approved</option>
-                                <option value="rejected">Rejected</option>
-                                <option value="canceled">Canceled</option>
-                                <option value="completed">Completed</option>
-                            </select>
-                            <button onclick="loadAppointments()" class="btn-refresh">
-                                <i class="fas fa-sync-alt"></i> Refresh
-                            </button>
-                        </div>
-                    </div>
-                    <div id="appointments-list" class="appointments-grid"></div>
-                </div>
-            </div>
-
         </main>
     </div>
 
-    <div id="ticket-template" style="position: fixed; left: -9999px; width: 500px; padding: 30px; font-family: 'Segoe UI', sans-serif; border: 3px solid #333; background: white; border-radius: 15px;">
-        
-        <div style="display: flex; align-items: center; border-bottom: 3px solid #1E88E5; padding-bottom: 20px; margin-bottom: 20px;">
-            <img src="images/logo.jpg" style="width: 100px; height: 100px; object-fit: cover; border-radius: 50%; margin-right: 20px; border: 2px solid #eee;">
-            
-            <div>
-                <h2 style="margin: 0; color: #1E88E5; font-size: 2.2rem; font-weight: 800; line-height: 1;">CLINIC PASS</h2>
-                <p style="margin: 5px 0 0 0; font-size: 1.1rem; color: #555; font-weight: 600;">Official Entry Ticket</p>
-            </div>
+    <div id="ticket-template" style="position: fixed; left: -9999px; width: 400px; padding: 20px; font-family: sans-serif; border: 2px solid #333; background: white;">
+        <div style="text-align: center; border-bottom: 2px solid #1E88E5; padding-bottom: 10px;">
+            <h2 style="margin: 0; color: #1E88E5;">CLINIC PASS</h2>
         </div>
-        
-        <div style="background: #f4f7fb; padding: 20px; border-radius: 12px; margin-bottom: 25px; border: 1px solid #e0e0e0;">
-            <p style="margin: 8px 0; font-size: 1.1rem;"><strong>Name:</strong> <span id="pdf-name" style="color: #333;">Student Name</span></p>
-            <p style="margin: 8px 0; font-size: 1.1rem;"><strong>Service:</strong> <span id="pdf-service">Checkup</span></p>
-            <p style="margin: 8px 0; font-size: 1.1rem;"><strong>Date:</strong> <span id="pdf-date">2025-10-20</span></p>
-            <p style="margin: 8px 0; font-size: 1.1rem;"><strong>Time:</strong> <span id="pdf-time" style="color: #1E88E5; font-weight: bold;">10:00 AM</span></p>
+        <div style="padding: 15px 0;">
+            <p><strong>Name:</strong> <span id="pdf-name">Student</span></p>
+            <p><strong>Date:</strong> <span id="pdf-date">2025-01-01</span></p>
+            <p><strong>Time:</strong> <span id="pdf-time">10:00 AM</span></p>
+            <p><strong>Service:</strong> <span id="pdf-service">Consultation</span></p>
         </div>
-
-        <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 15px;">
-            <div id="pdf-qr-code" style="padding: 15px; background: white; border: 1px solid #ccc; border-radius: 10px;"></div> 
-            <p style="margin-top: 10px; font-size: 0.9rem; color: #888;">ID: <span id="pdf-id">#123</span></p>
-        </div>
-    
-        <div style="text-align: center; font-size: 0.8rem; color: #aaa; border-top: 1px solid #eee; padding-top: 10px;">
-            <p>Please present this ticket at the clinic reception.</p>
+        <div style="text-align: center;">
+            <div id="pdf-qr-code" style="display:inline-block;"></div>
+            <p>ID: <span id="pdf-id">#123</span></p>
         </div>
     </div>
-
-    <footer class="footer">
-        <p>© 2025 Eastern Visayas State University - Ormoc Campus</p>
-    </footer>
-
-<div id="reschedule-modal" class="modal-overlay" style="display: none;">
-    <div class="modal-box">
-        <div class="modal-header">
-            <h3>Reschedule Appointment</h3>
-            <span class="close-btn" onclick="closeRescheduleModal()">&times;</span>
-        </div>
-        <div class="modal-body">
-            <input type="hidden" id="reschedule-id">
-            
-            <div class="input-group">
-                <label>New Date</label>
-                <input type="date" id="reschedule-date" onchange="loadRescheduleSlots()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
-            </div>
-
-            <div class="input-group" style="margin-top: 15px;">
-                <label>New Time</label>
-                <div id="reschedule-slots" class="slots-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; margin-top: 5px;">
-                    <p style="color:#888; font-size: 0.9rem;">Select a date first.</p>
-                </div>
-                <input type="hidden" id="reschedule-time">
-            </div>
-
-            <button onclick="submitReschedule()" class="btn-primary" style="width: 100%; margin-top: 20px;">Confirm Change</button>
-        </div>
-    </div>
-</div>
-
-<style>
-    .modal-overlay {
-        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background: rgba(0,0,0,0.5); z-index: 1000;
-        display: flex; justify-content: center; align-items: center;
-    }
-    .modal-box {
-        background: white; padding: 20px; border-radius: 10px; width: 90%; max-width: 400px;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-    }
-    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
-    .close-btn { font-size: 1.5rem; cursor: pointer; }
-
-    .typing-indicator {
-        background-color: #f1f0f0;
-        color: #888;
-        padding: 10px 15px;
-        border-radius: 15px;
-        margin: 5px 0;
-        width: fit-content;
-        font-style: italic;
-        font-size: 0.9rem;
-        display: flex;
-        align-items: center;
-        gap: 5px;
-    }
-    
-    /* Optional: Simple dot animation */
-    .typing-dots::after {
-        content: ' .';
-        animation: dots 1.5s steps(5, end) infinite;
-    }
-    
-    @keyframes dots {
-        0%, 20% { content: ' .'; }
-        40% { content: ' ..'; }
-        60% { content: ' ...'; }
-        80%, 100% { content: ''; }
-    }
-</style>
-
-
 
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="student-dashboard.js"></script>
-
 </body>
 </html>
