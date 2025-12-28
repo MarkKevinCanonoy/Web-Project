@@ -1,27 +1,44 @@
-# Clinic_app
-System sa Web
+# School Clinic Appointment System
 
+A smart, web-based application designed to streamline school clinic operations. It features an AI Chatbot for easy appointment booking, a real-time live queue for doctors, and an automated email notification system with QR code tickets.
 
-install python 3.12 kay di mo gana ang 3.14
-- okay ra mag install ug damo na version sa python niya pwede ka mo gamit ug bisad unsa na version 
-- aron magamit ang specific na version mag gamit tag venv, mura nag mag create ug virtual environment kung asa na gi run na command.
+## Features
 
-during installation, e check ang add to path.
+### For Students (Client)
+* **AI Chatbot Assistant:** Book appointments naturally by chatting with a smart AI.
+* **Manual Booking:** Simple form to schedule Medical Consultations or Clearances.
+* **Appointment History:** View status of requests (Pending, Approved, Completed) in real-time.
+* **Reschedule/Cancel:** Manage appointments easily with a single click.
 
-if done na
-download tong system2 na folder, e butang bisad asa.
-e open sa cmd kung asa na path ang system2 na folder -> mag create tag virtual environment inside.
+### For Nurses
+* **Dashboard Overview:** View a centralized list of all pending requests.
+* **Triage System:** Approve or reject appointments efficiently.
+* **Email Notifications:** Automatically sends QR Code tickets to students upon approval.
 
-run ----> py -3.12 -m venv venv <---
-atu e activate ----> venv\Scripts\activate <---
+### For Doctors
+* **Live Queue (Hero Card):** Shows the patient currently being served and who is up next.
+* **QR Code Scanner:** Verify patient tickets instantly using the camera.
+* **Digital Diagnosis:** Fill out Vital Signs, Findings, Treatment, and Recommendations.
+* **No-Show Management:** Quickly remove students from the queue if they fail to appear.
 
+---
 
-if naa nay venv nakabutang. 
-run ----> pip install -r requirements.txt
+## Technologies Used
+* **Frontend:** HTML5, CSS3, JavaScript (Vanilla)
+* **Backend:** Python (FastAPI)
+* **Database:** MySQL
+* **AI:** Google Gemini API
+* **Other:** SMTP (Email), QR Code Generation
 
-if done na
-python -m uvicorn main:app --reload
+---
 
+## How to Run the Project
 
+### 1. Prerequisites
+Make sure you have executed the setup script:
+* Run the `run_server.bat` file. It will also install the requirements.
 
-
+### 2. Database Setup
+1.  Open your MySQL Command Line.
+2.  Run the schema file using the `source` command.
+    * *Example:* `source C:\Users\ASUS\Documents\SCHOOLZ\3rd Year\web\FINAL-NAJUD\Web-Project\schema.sql`

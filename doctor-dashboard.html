@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doctor's Dashboard</title>
+    <link rel="stylesheet" href="style.css"> 
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+</head>
+<body style="background: url('images/bg.png') no-repeat center center fixed; background-size: cover;">
+
+    <header class="top-bar header-doctor">
+        <div class="header-content">
+            <div class="brand">
+                <img src="images/logo.jpg" alt="Logo" style="height: 40px; border-radius: 50%; margin-right: 10px;">
+                <h1>Doctor's Dashboard</h1>
+            </div>
+            <!--
+            <div style="display: flex; gap: 10px;">
+                <button onclick="window.location.href='index.html'" class="btn-logout">
+                    <i class="fas fa-sign-out-alt"></i> Exit
+                </button>
+            </div> -->
+        </div>
+    </header>
+
+    <div class="container">
+        <div id="doctor-queue" class="queue-container" style="max-width: 800px; margin: 0 auto;">
+            </div>
+    </div>
+
+    <div id="diagnosis-modal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <div class="modal-header">
+                <h2 style="color: #1E88E5;">Medical Diagnosis</h2>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            
+            <div id="diag-patient-info" style="margin-bottom: 20px; background: #e3f2fd; padding: 15px; border-radius: 8px; border: 1px solid #bbdefb; color:#0d47a1;"></div>
+
+            <input type="hidden" id="diag-id">
+            
+            <div class="booking-form-body" style="padding: 0; max-height: 60vh; overflow-y: auto;">
+                
+                <h4 style="margin-bottom: 10px; color: #555; border-bottom: 1px solid #eee; padding-bottom: 5px;">I. Vital Signs</h4>
+                <div class="form-row">
+                    <div class="input-group">
+                        <label>Temperature (°C)</label>
+                        <input type="number" id="vital-temp" step="0.1" placeholder="36.5">
+                    </div>
+                    <div class="input-group">
+                        <label>Blood Pressure</label>
+                        <input type="text" id="vital-bp" placeholder="120/80">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="input-group">
+                        <label>Pulse Rate (bpm)</label>
+                        <input type="number" id="vital-pulse" placeholder="72">
+                    </div>
+                    <div class="input-group">
+                        <label>Weight (kg)</label>
+                        <input type="number" id="vital-weight" placeholder="50">
+                    </div>
+                </div>
+
+                <h4 style="margin: 15px 0 10px; color: #555; border-bottom: 1px solid #eee; padding-bottom: 5px;">II. Assessment</h4>
+                <div class="input-group">
+                    <label>Clinical Findings / Diagnosis</label>
+                    <textarea id="diag-findings" rows="3" placeholder="e.g. Acute Pharyngitis, tension headache..."></textarea>
+                </div>
+
+<h4 style="margin: 15px 0 10px; color: #555; border-bottom: 1px solid #eee; padding-bottom: 5px;">III. Treatment Plan</h4>
+                
+                <div id="medicine-list-container">
+                    </div>
+
+                <button onclick="addMedicineRow()" style="background: #6c757d; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; margin-top: 5px;">
+                    <i class="fas fa-plus"></i> Add Another Medicine
+                </button>
+
+                <h4 style="margin: 15px 0 10px; color: #555; border-bottom: 1px solid #eee; padding-bottom: 5px;">IV. Recommendation</h4>
+                <div class="input-group" style="display: flex; gap: 15px; flex-wrap: wrap;">
+                    <label style="cursor:pointer; display:flex; align-items:center; gap:5px;">
+                        <input type="radio" name="recommendation" value="Back to Class" checked> 🟢 Back to Class
+                    </label>
+                    <label style="cursor:pointer; display:flex; align-items:center; gap:5px;">
+                        <input type="radio" name="recommendation" value="Rest in Clinic"> 🟡 Rest in Clinic
+                    </label>
+                    <label style="cursor:pointer; display:flex; align-items:center; gap:5px;">
+                        <input type="radio" name="recommendation" value="Sent Home"> 🔴 Send Home
+                    </label>
+                    <label style="cursor:pointer; display:flex; align-items:center; gap:5px;">
+                        <input type="radio" name="recommendation" value="Hospital"> 🚑 Hospital Transfer
+                    </label>
+                </div>
+
+            </div>
+            
+            <div style="margin-top: 20px; display: flex; gap: 10px;">
+                <button onclick="initiateCompletion()" class="btn-primary" style="flex: 2; background-color: #2ecc71;">
+                    <i class="fas fa-qrcode"></i> Scan & Finalize
+                </button>
+                <button onclick="closeModal()" class="btn-delete" style="flex: 1; background: #eee; color: #555; border-color: #ddd;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="scanner-modal" class="modal" style="z-index: 1001;">
+        <div class="modal-content" style="text-align: center; max-width: 400px;">
+            <h3>Scan Ticket to Confirm</h3>
+            <p style="color:#666; font-size:0.9rem;">Please scan the patient's ticket to save this record.</p>
+            <div id="reader" style="width: 100%; margin: 10px 0;"></div>
+            <button onclick="stopScanner()" class="btn-cancel" style="width: 100%;">Cancel Scan</button>
+        </div>
+    </div>
+
+        <footer class="footer">
+        <p>&copy; 2025 Eastern Visayas State University - Ormoc Campus</p>
+    </footer>
+
+    <style>
+        .hero-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f0f4f8 100%);
+            border: 2px solid #1E88E5;
+            border-radius: 20px;
+            padding: 40px;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(30, 136, 229, 0.2);
+            margin-bottom: 30px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-card::before {
+            content: "NOW SERVING";
+            position: absolute;
+            top: 0; left: 50%; transform: translateX(-50%);
+            background: #1E88E5; color: white;
+            padding: 5px 20px;
+            border-bottom-left-radius: 10px; border-bottom-right-radius: 10px;
+            font-weight: bold; font-size: 0.9rem; letter-spacing: 1px;
+        }
+
+        .hero-time { font-size: 3rem; font-weight: 800; color: #1E88E5; margin: 10px 0; }
+        .hero-name { font-size: 2rem; color: #333; margin-bottom: 10px; font-weight: 700; }
+        .hero-details { color: #666; font-size: 1.1rem; margin-bottom: 25px; }
+        .hero-actions { display: flex; justify-content: center; gap: 15px; }
+
+        .btn-noshow {
+            background: #607d8b; color: white; border: none;
+            padding: 12px 25px; border-radius: 8px; cursor: pointer; font-weight: 600;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .btn-complete-hero {
+            background: #2ecc71; color: white; border: none;
+            padding: 12px 25px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 1.1rem;
+            display: flex; align-items: center; gap: 8px;
+        }
+
+        .queue-list-header { margin-bottom: 15px; font-weight: 700; color: #666; text-transform: uppercase; font-size: 0.9rem; letter-spacing: 1px; }
+
+        .queue-item {
+            background: white; padding: 15px 20px; border-radius: 12px;
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 10px; border-left: 5px solid #bdc3c7;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .queue-item h4 { margin: 0; font-size: 1.1rem; color: #333; }
+        .queue-item p { margin: 0; font-size: 0.9rem; color: #777; }
+        .queue-time { font-weight: bold; font-size: 1.2rem; color: #1E88E5; }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="doctor-dashboard.js"></script>
+</body>
+</html>

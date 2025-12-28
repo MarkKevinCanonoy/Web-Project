@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nurse Station</title>
+    <link rel="stylesheet" href="style.css"> 
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+</head>
+<body style="background: url('images/bg.png') no-repeat center center fixed; background-size: cover;">
+
+    <header class="top-bar header-nurse">
+        <div class="header-content">
+            <div class="brand">
+                <img src="images/logo.jpg" alt="Logo" style="height: 40px; border-radius: 50%; margin-right: 10px;">
+                <h1>Nurse Dashboard</h1>
+            </div>
+            <!--
+            <button onclick="window.location.href='index.html'" class="btn-logout">
+                <i class="fas fa-sign-out-alt"></i> Exit
+            </button> -->
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="card">
+            <div class="section-header">
+                <h2><i class="fas fa-clipboard-list"></i> Pending Requests</h2>
+                <button onclick="loadNurseAppointments()" class="btn-refresh"><i class="fas fa-sync-alt"></i> Refresh</button>
+            </div>
+            
+            <div class="table-responsive">
+                <table class="data-table">
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Patient</th>
+            <th>Service</th>
+            <th>Reason</th>  <th>Appointment Type</th>
+            <th>Status</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody id="nurse-list">
+        </tbody>
+</table>
+            </div>
+        </div>
+    </div>
+
+        <footer class="footer">
+        <p>&copy; 2025 Eastern Visayas State University - Ormoc Campus</p>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="nurse-dashboard.js"></script>
+</body>
+</html>
