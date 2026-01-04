@@ -31,7 +31,7 @@ async function loadNurseAppointments() {
 
         pending.forEach(apt => {
             const isUrgent = apt.urgency === 'Urgent';
-            const urgencyBadge = isUrgent ? '<span style="color:red; font-weight:bold;">URGENT</span>' : 'Normal';
+            const urgencyBadge = isUrgent ? '<span style="color:red; font-weight:bold;">URGENT</span>' : 'Standard';
             
             const row = `
                 <tr style="${isUrgent ? 'background:#fff5f5' : ''}">

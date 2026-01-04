@@ -8,7 +8,7 @@ CREATE TABLE appointments (
     client_email VARCHAR(255) NOT NULL,  
     
     service_type VARCHAR(100) NOT NULL,
-    urgency ENUM('Normal', 'Urgent') DEFAULT 'Normal',
+    urgency ENUM('Standard', 'Urgent') DEFAULT 'Standard',    
     
     appointment_date DATE NOT NULL,
     appointment_time TIME NOT NULL,
