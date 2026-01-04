@@ -36,9 +36,14 @@ A smart, web-based application designed to streamline school clinic operations. 
 
 ### 1. Prerequisites
 Make sure you have executed the setup script:
+* make sure you have internet connection
+* install python version 3.12
 * Run the `run_server.bat` file. It will also install the requirements.
 
 ### 2. Database Setup
 1.  Open your MySQL Command Line.
 2.  Run the schema file using the `source` command.
     * *Example:* `source C:\Users\ASUS\Documents\SCHOOLZ\3rd Year\web\FINAL-NAJUD\Web-Project\schema.sql`
+
+### 3. How to view
+* use live server from vscode on client-dashboard.html, doctor-dashboard.html, nurse-dashboard.html
